@@ -1,0 +1,21 @@
+git init
+git add README.md
+git commit -m "first commit"
+git branch -M main
+git remote add origin git@github.com:TomROUSSEAU28/MyCalculator_V3.git
+git push -u origin main
+
+
+quand on récup un projet la premiere fois : 
+git clone https://github.com/TomROUSSEAU28/MyCalculator_V3.git
+
+pour update : 
+git pull
+
+pour ne pas faire croire que ya un changement du au difference entre mise en forme des saut de ligne entre os : 
+Windows : git config --global core.autocrlf true
+Linux : git config --global core.autocrlf input
+
+Si powershell bloque l'execution de script : 
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+

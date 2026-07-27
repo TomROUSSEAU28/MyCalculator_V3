@@ -1,0 +1,29 @@
+# ===================================
+# Calculateur d'Électronique - Requirements
+# ===================================
+
+# --- Calculs scientifiques de base ---
+numpy
+scipy
+
+# --- Théorie du contrôle et asservissements ---
+control
+
+# --- Simulation de circuits électriques ---
+PySpice
+
+# --- Graphiques et visualisations ---
+plotly
+matplotlib
+
+# --- Manipulation de données et export ---
+pandas
+openpyxl
+
+# --- Calculs symboliques ---
+sympy 
+
+# --- Class plus sécu --- 
+pydantic
+
+

@@ -1,0 +1,34 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.python-version
+
+# --- Environnement Virtuel (Le plus important) ---
+.venv/
+venv/
+ENV/
+env/
+
+# --- IDE & Éditeurs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Systèmes d'exploitation ---
+.DS_Store
+Thumbs.db
+
+# --- Données & Logs ---
+*.log
+# On ignore les fichiers temporaires Excel qui s'ouvrent quand tu consultes tes CSV
+~$*.xlsx
+~$*.csv
+
+# --- Simulation & Electronique (Optionnel) ---
+# Si tu utilises des exports LTspice ou PSIM, tu peux ignorer les fichiers bruts
+*.raw
+*.log
+*.net
