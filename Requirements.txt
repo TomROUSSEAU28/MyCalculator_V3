@@ -26,4 +26,6 @@ sympy
 # --- Class plus sécu --- 
 pydantic
 
+ipywidgets
+
 

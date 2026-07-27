@@ -21,6 +21,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# --- Figures générées ---
+OUTPUT/
+
 # --- Données & Logs ---
 *.log
 # On ignore les fichiers temporaires Excel qui s'ouvrent quand tu consultes tes CSV
