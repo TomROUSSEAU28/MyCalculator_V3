@@ -61,8 +61,6 @@ I_BODY = 0.0  # diode current during the dead time [A]
 D_BODY_PCT = 0.0  # diode conduction duty cycle [%]
 
 # Charge the turn-on has to sweep out of the facing diode, entered by hand.
-#
-
 Q_RR_NC = 0.0  # [nC]
 
 # --- Thermal -----------------------------------------------------------------
