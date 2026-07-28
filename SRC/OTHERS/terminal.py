@@ -28,6 +28,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
+from rich.style import Style
 
 __all__ = [
     "THEMES",
@@ -44,129 +45,94 @@ __all__ = [
     "use_theme",
 ]
 
-WIDTH = 78  # report width, in characters
-INDENT = 2  # left margin of everything but the section rules
-LABEL_WIDTH = 38  # width of the label column of kv()
+WIDTH = 200  # report width, in characters
+INDENT = 4  # left margin of everything but the section rules
+LABEL_WIDTH = 50  # width of the label column of kv()
 
 
-# ============================================================================ #
-#  Themes
-# ============================================================================ #
-
-# Every theme defines the same style names, so no helper can ever land on a
-# missing colour. The names are semantic on purpose: "report.label" says what
-# the text is, not what it looks like — that is what makes a theme swappable.
-#
-#   report.title  section headings          report.header  table headers
-#   report.text   body text                 report.border  table rules
-#   report.label  the left column of kv()   report.rule    section rules
-#   report.value  the right column of kv()  report.muted   asides, units
-#
-# Every theme here mirrors the plot palette of the same name in
-# SRC/OTHERS/plot.py, so a report and its figures look like they belong
-# together. "mono" drops colour entirely — for log files, CI output, and
-# anything piped elsewhere.
-#
-# Two things are different from the plots, and they set the rules below.
-#
-# A report has no surface we control: it prints onto whatever background the
-# terminal has. So the gate is not the categorical separation the figures are
-# held to, it is WCAG *text* contrast — every colour below was measured against
-# four plausible dark backgrounds (#000000, #1a1a19, #1e1e1e, #0c0c0c) and
-# clears 4.5:1 on all of them, except the accent titles, which are bold and
-# clear the 3:1 large-text gate (worst case 4.23:1, "vivid").
-#
-# And everything in a report is text, so the accent gets far less room than in
-# a figure: it carries the section headings and tints the rules, while values
-# stay white and the four alert colours stay put. An alert level is a status,
-# not decoration — "[ERROR]" has to look the same in every theme, or it stops
-# being something you can learn once.
-#
-# The three accent themes are dark-background only, like "dark" itself: on a
-# light terminal they are unreadable. Use "light" or "mono" there.
 THEMES: dict[str, dict[str, str]] = {
+    # Inspiré par Tailwind CSS (Gris ardoise profond) : très lisible et doux pour les yeux.
     "light": {
-        "report.title": "bold #0b0b0b",
-        "report.text": "#0b0b0b",
-        "report.label": "#52514e",
-        "report.value": "bold #0b0b0b",
-        "report.muted": "#898781",
-        "report.header": "bold #52514e",
-        "report.border": "#c3c2b7",
-        "report.rule": "#c3c2b7",
-        "report.error": "bold #d03b3b",
-        "report.warn": "bold #b26a00",
-        "report.info": "bold #2a78d6",
-        "report.ok": "bold #007a3d",
+        "report.title": "bold #111827",
+        "report.text": "#374151",
+        "report.label": "#6b7280",
+        "report.value": "bold #111827",
+        "report.muted": "italic #9ca3af",
+        "report.header": "bold #4b5563",
+        "report.border": "#d1d5db",
+        "report.rule": "#e5e7eb",
+        "report.error": "bold #ef4444",
+        "report.warn": "bold #f59e0b",
+        "report.info": "bold #3b82f6",
+        "report.ok": "bold #10b981",
     },
+    # Inspiré par GitHub Dark : contraste net, bordures discrètes, statuts percutants.
     "dark": {
-        "report.title": "bold #ffffff",
-        "report.text": "#e6e5e0",
-        "report.label": "#c3c2b7",
+        "report.title": "bold #e1e4e8",
+        "report.text": "#c9d1d9",
+        "report.label": "#8b949e",
         "report.value": "bold #ffffff",
-        "report.muted": "#898781",
-        "report.header": "bold #c3c2b7",
-        "report.border": "#383835",
-        "report.rule": "#383835",
-        "report.error": "bold #ff6b6b",
-        "report.warn": "bold #eda100",
-        "report.info": "bold #3987e5",
-        "report.ok": "bold #34c759",
+        "report.muted": "italic #6e7681",
+        "report.header": "bold #8b949e",
+        "report.border": "#30363d",
+        "report.rule": "#30363d",
+        "report.error": "bold #f85149",
+        "report.warn": "bold #d29922",
+        "report.info": "bold #58a6ff",
+        "report.ok": "bold #3fb950",
     },
-    # Red on black. The section headings carry the accent; the rules are the
-    # same warm near-black step the figures use for their axes.
+    # Inspiré par Dracula : teintes chaudes et accents vibrants.
     "red": {
-        "report.title": "bold #e66767",
-        "report.text": "#ebe2e2",
-        "report.label": "#cdc0c0",
+        "report.title": "bold #ff5555",
+        "report.text": "#f8f8f2",
+        "report.label": "#d4c4c4",
         "report.value": "bold #ffffff",
-        "report.muted": "#9a8d8d",
-        "report.header": "bold #cdc0c0",
-        "report.border": "#3a2c2d",
-        "report.rule": "#3a2c2d",
-        "report.error": "bold #ff6b6b",
-        "report.warn": "bold #eda100",
-        "report.info": "bold #3987e5",
-        "report.ok": "bold #34c759",
+        "report.muted": "italic #887979",
+        "report.header": "bold #ffb86c",
+        "report.border": "#442c2c",
+        "report.rule": "#442c2c",
+        "report.error": "bold #ff5555",
+        "report.warn": "bold #f1fa8c",
+        "report.info": "bold #8be9fd",
+        "report.ok": "bold #50fa7b",
     },
-    # Blue on black. Note the accent and "report.info" are the same blue here —
-    # the one overlap the fixed-status rule allows, since a blue [INFO] tag in a
-    # blue-titled report reads as the same family on purpose.
+    # Inspiré par Nord Theme : bleus arctiques, teintes froides et reposantes.
     "blue": {
-        "report.title": "bold #3987e5",
-        "report.text": "#e2e6ec",
-        "report.label": "#c2cad6",
-        "report.value": "bold #ffffff",
-        "report.muted": "#8b95a3",
-        "report.header": "bold #c2cad6",
-        "report.border": "#2b3440",
-        "report.rule": "#2b3440",
-        "report.error": "bold #ff6b6b",
-        "report.warn": "bold #eda100",
-        "report.info": "bold #3987e5",
-        "report.ok": "bold #34c759",
+        "report.title": "bold #88c0d0",
+        "report.text": "#d8dee9",
+        "report.label": "#92a1b9",
+        "report.value": "bold #eceff4",
+        "report.muted": "italic #4c566a",
+        "report.header": "bold #81a1c1",
+        "report.border": "#3b4252",
+        "report.rule": "#3b4252",
+        "report.error": "bold #bf616a",
+        "report.warn": "bold #ebcb8b",
+        "report.info": "bold #5e81ac",
+        "report.ok": "bold #a3be8c",
     },
-    # The loud one, on a plum black.
+    # Inspiré par Cyberpunk / Synthwave : néon rose, cyan et violet intense.
     "vivid": {
-        "report.title": "bold #d55181",
-        "report.text": "#e8e2ec",
-        "report.label": "#cec7d6",
-        "report.value": "bold #ffffff",
-        "report.muted": "#968ea1",
-        "report.header": "bold #cec7d6",
-        "report.border": "#332c3b",
-        "report.rule": "#332c3b",
-        "report.error": "bold #ff6b6b",
-        "report.warn": "bold #eda100",
-        "report.info": "bold #3987e5",
-        "report.ok": "bold #34c759",
+        "report.title": "bold #ff007f",
+        "report.text": "#e0e0e0",
+        "report.label": "#b366ff",
+        "report.value": "bold #00ffff",
+        "report.muted": "italic #7a429c",
+        "report.header": "bold #ff007f",
+        "report.border": "#4d0066",
+        "report.rule": "#4d0066",
+        "report.error": "bold #ff003c",
+        "report.warn": "bold #ffea00",
+        "report.info": "bold #00f0ff",
+        "report.ok": "bold #39ff14",
     },
+    # Mono affiné : ajout de l'italique pour mieux séparer visuellement le texte secondaire sans couleur.
     "mono": {
         "report.title": "bold",
         "report.text": "none",
         "report.label": "none",
         "report.value": "bold",
-        "report.muted": "dim",
+        "report.muted": "dim italic",
         "report.header": "bold",
         "report.border": "dim",
         "report.rule": "dim",
@@ -175,14 +141,50 @@ THEMES: dict[str, dict[str, str]] = {
         "report.info": "bold",
         "report.ok": "bold",
     },
+    # Altium Orange : Inspiré des calques "Mechanical", "Keep-Out" ou des sélections de composants.
+    # Un orange cuivré et tranchant, parfait pour attirer l'œil sans éblouir.
+    "orange_altium": {
+        "report.title": "bold #ff8c00",  # Orange technique vif (Mechanical layer)
+        "report.text": "#d4d4d4",
+        "report.label": "#858585",
+        "report.value": "bold #ffffff",
+        "report.muted": "dim #5c5c5c",
+        "report.header": "bold #cc7000",  # Orange cuivré plus dense
+        "report.border": "#2d2d30",
+        "report.rule": "#2d2d30",
+        "report.error": "bold #ff2a2a",  # Rouge alerte DRC
+        "report.warn": "bold #ffdd00",  # Jaune "Silkscreen" (Top Overlay)
+        "report.info": "bold #00bfff",  # Bleu cyan
+        "report.ok": "bold #00ff00",  # Vert de validation standard (universel en ingénierie)
+    },
+    "good": {
+        "report.title": "bold #c58af9",  # Violet étincelant (l'étincelle de l'IA)
+        "report.text": "#e8eaed",  # Blanc cassé ultra-lisible, anti-fatigue
+        "report.label": "#9aa0a6",  # Gris structurel, neutre et analytique
+        "report.value": "bold #8ab4f8",  # Bleu lumineux pour détacher les variables et résultats
+        "report.muted": "dim italic #5f6368",  # Discrétion absolue pour le bruit de fond
+        "report.header": "bold #a8c7fa",  # Bleu pastel pour une hiérarchie douce
+        "report.border": "#3c4043",  # Bordure grise anthracite, nette mais subtile
+        "report.rule": "#3c4043",
+        "report.error": "bold #f28b82",  # Rouge doux, n'agresse pas l'œil mais reste clair
+        "report.warn": "bold #fdd663",  # Jaune ambre contrastant
+        "report.info": "bold #24c1e0",  # Cyan très froid pour les flux de données
+        "report.ok": "bold #81c995",  # Vert pastel de validation
+    },
 }
-
 DEFAULT_THEME = "dark"
 
 # One console for the whole project, created once. highlight=False keeps rich
 # from colouring numbers on its own: in a report every value is already placed
 # by hand, and a second, uninvited colour code would only compete with it.
-console = Console(theme=Theme(THEMES[DEFAULT_THEME]), width=WIDTH, highlight=False)
+console = Console(
+    theme=Theme(THEMES[DEFAULT_THEME]),
+    width=WIDTH,
+    highlight=False,
+    color_system="truecolor",
+    force_jupyter=False,
+    force_terminal=True,
+)
 
 _active_theme = DEFAULT_THEME
 
@@ -248,14 +250,18 @@ def kv(
     """
     One "label ....... value" line.
 
-    soft_wrap keeps a long value (a file path, mostly) on its own line instead
-    of folding it back under the label column, where it would read as a second
-    label. It runs past the report width; the terminal deals with it.
     """
-    line = Text(" " * indent)
-    line.append(f"{label:<{label_width}}", style="report.label")
-    line.append(str(value), style="report.value")
-    console.print(line, soft_wrap=True)
+    grid = Table.grid(padding=(0, 0))
+
+    grid.add_column(width=label_width, no_wrap=True)
+
+    grid.add_column()
+
+    grid.add_row(
+        Text(str(label), style="report.label"), Text(str(value), style="report.value")
+    )
+
+    _print_indented(grid, indent)
 
 
 def table(
@@ -264,30 +270,31 @@ def table(
     indent: int = INDENT,
 ) -> None:
     """
-    Column table, widths handled by rich.
+    Column table, styled like a modern spreadsheet (Zebra striping).
 
-    First column left-aligned (labels), the others right-aligned (numbers).
-    Cells are str()-ed as they come: format your floats before calling, the
-    caller is the only one that knows the units.
-
-    Everything goes in as Text rather than as a plain string, because a report
-    is full of "[W]", "[ns]", "[°C/W]" — which rich would otherwise read as
-    markup tags and swallow.
+    First column left-aligned (labels), the others center-aligned.
+    Alternating row backgrounds for better readability.
     """
+    # Récupération dynamique du style du thème actif + ajout de l'inversion
+    header_band_style = console.get_style("report.header") + Style(reverse=True)
+
     grid = Table(
-        box=box.SIMPLE_HEAD,  # a single rule under the header, nothing else
-        header_style="report.header",
+        box=box.HEAVY_HEAD,
+        header_style=header_band_style,  # <-- Utilisation de l'objet Style combiné
         border_style="report.border",
+        row_styles=["none", "dim"],
         show_edge=False,
-        pad_edge=False,
-        padding=(0, 2, 0, 0),
+        pad_edge=True,
+        padding=(0, 2, 0, 2),
     )
+
     for position, header in enumerate(headers):
-        grid.add_column(
-            Text(str(header)), justify="left" if position == 0 else "right"
-        )
+        alignment = "left" if position == 0 else "center"
+        grid.add_column(Text(str(header)), justify=alignment)
+
     for row in rows:
         grid.add_row(*(Text(str(cell)) for cell in row))
+
     _print_indented(grid, indent)
 
 

@@ -1,33 +1,4 @@
 """
-Notebook front-end: pictures, widgets, layout.
-
-Third module of the presentation layer, and the only one that assumes a
-notebook is running:
-
-    terminal.py  -> the text report      (works in a terminal AND in a cell)
-    plot.py      -> the figures
-    notebook.py  -> what a notebook adds on top: pictures and a control panel
-
-Nothing domain-specific here either. A notebook imports these, then only
-writes what its own subject means.
-
-
-HOW IT FITS TOGETHER
---------------------
-Everything in the "Pictures" section RETURNS a display object. In a notebook
-that means you can either end a cell with it:
-
-    image(ROOT / "DOCUMENTS/gate_charge.png", caption="Gate charge")
-
-or hand it to display() when you are inside a function or a `with out:` block:
-
-    display(gallery([a, b], columns=2))
-
-Everything in the "Widgets" and "Layout" sections returns a plain ipywidgets
-object, so anything not covered here still works — drop down to `ipywidgets`
-and mix freely.
-
-
 A COMPLETE PANEL, END TO END
 ----------------------------
     from SRC.OTHERS.notebook import (
@@ -343,8 +314,13 @@ def number(
     """A float field, bounded. Put the unit in the label: "Voltage [V]:"."""
     style, layout = _geometry(label_width, width)
     return W.BoundedFloatText(
-        value=value, description=label, style=style, layout=layout,
-        step=step, min=minimum, max=maximum,
+        value=value,
+        description=label,
+        style=style,
+        layout=layout,
+        step=step,
+        min=minimum,
+        max=maximum,
     )
 
 
@@ -359,8 +335,12 @@ def integer(
     """An int field, bounded — counts: vias, turns, phases."""
     style, layout = _geometry(label_width, width)
     return W.BoundedIntText(
-        value=value, description=label, style=style, layout=layout,
-        min=minimum, max=maximum,
+        value=value,
+        description=label,
+        style=style,
+        layout=layout,
+        min=minimum,
+        max=maximum,
     )
 
 
@@ -378,9 +358,7 @@ def choice(
               the value you want back is not the label you want shown.
     """
     style, layout = _geometry(label_width, width)
-    picker = W.Dropdown(
-        options=options, description=label, style=style, layout=layout
-    )
+    picker = W.Dropdown(options=options, description=label, style=style, layout=layout)
     if value is not None:
         picker.value = value
     return picker
@@ -393,7 +371,9 @@ def toggle(
 ) -> W.Checkbox:
     """A checkbox. indent=False keeps it aligned with the fields above it."""
     return W.Checkbox(
-        value=value, description=label, indent=False,
+        value=value,
+        description=label,
+        indent=False,
         layout=W.Layout(width=width or FIELD_WIDTH),
     )
 
@@ -432,7 +412,9 @@ def button(
     """
     area = out or W.Output()
     go = W.Button(
-        description=label, button_style="primary", icon=icon,
+        description=label,
+        button_style="primary",
+        icon=icon,
         layout=W.Layout(width="200px", height="38px"),
     )
 
@@ -466,6 +448,7 @@ def visible_when(target, control, *values) -> None:
     visible_when(rth_field, mode_dropdown, "manual")
     visible_when(pcb_box, mode_dropdown, "pcb", "hybrid")   # several values
     """
+
     def sync(_=None):
         target.layout.display = "" if control.value in values else "none"
 

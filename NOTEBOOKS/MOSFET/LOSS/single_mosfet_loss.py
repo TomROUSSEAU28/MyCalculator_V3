@@ -1,21 +1,10 @@
 """
-Loss of a single MOSFET — the "spreadsheet" version.
-
-Same model as the `single_mosfet_loss.ipynb` notebook, without the widgets:
-everything the panel used to set is a constant of the CONFIGURATION section
-below. Edit the values at the top of the file, run it, read the report.
-
-    python NOTEBOOKS/MOSFET/LOSS/single_mosfet_loss.py
-
-Figures go to OUTPUT/ (SAVE_PLOTS) and/or open in a window (SHOW_PLOTS).
-
-The model in short (derived in the notebook):
-    P_cond  = R_DS(on)(Tj) * I_rms**2        R_DS(on)(Tj) = R_25 [1 + a_R (Tj - 25)]
-    P_sw    = ½ (V_on I_on t_on + V_off I_off t_off) f_sw
-    P_oss   = ½ C_oss,er(V_on) V_on**2 f_sw
-    P_body  = V_F I_body D_body + Q_rr V_on f_sw
-    P_g,int = Q_g dVgs f_sw * R_g,int / R_g,tot     (the only share heating the die)
-    Tj(k+1) = T_amb + R_th * P_total(Tj(k))
+P_cond  = R_DS(on)(Tj) * I_rms**2        R_DS(on)(Tj) = R_25 [1 + a_R (Tj - 25)]
+P_sw    = ½ (V_on I_on t_on + V_off I_off t_off) f_sw
+P_oss   = ½ C_oss,er(V_on) V_on**2 f_sw
+P_body  = V_F I_body D_body + Q_rr V_on f_sw
+P_g,int = Q_g dVgs f_sw * R_g,int / R_g,tot     (the only share heating the die)
+Tj(k+1) = T_amb + R_th * P_total(Tj(k))
 """
 
 from __future__ import annotations
@@ -40,11 +29,6 @@ MOSFET = "BSC016N06NS"
 DRIVER = "UCC27714"
 
 # --- Operating point ---------------------------------------------------------
-# No "hard / soft switching" switch: you enter the voltage each edge actually
-# sweeps.
-#   hard switching     -> V_TURN_ON = V_TURN_OFF = V_bus
-#   ZVS at turn-on     -> V_TURN_ON = 0   (kills P_oss AND the recovery term)
-#   ZVS on both edges  -> V_TURN_ON = V_TURN_OFF = 0
 V_TURN_ON = 48.0  # V_ds swept at turn-on [V]
 V_TURN_OFF = 48.0  # V_ds swept at turn-off [V]
 I_RMS = 15.8  # conduction rms current [A]
@@ -137,7 +121,7 @@ PLOT_DPI = 300  # raster resolution; ignored by svg / pdf
 # Report palette. Same five names as PLOT_THEME, so a report and its figures
 # match; plus "mono", which drops colour for a log file or a CI run. The accent
 # themes assume a dark terminal. Full list in SRC/OTHERS/terminal.py.
-TERMINAL_THEME = "dark"
+TERMINAL_THEME = "good"
 OUTPUT_DIR = ROOT / "OUTPUT"
 
 
@@ -277,7 +261,7 @@ def resolve_r_th(mosfet) -> tuple[float | None, list[tuple[str, str]], list]:
     ]
     if missing:
         message = stop(
-            f"{MOSFET} has no R_thJC for the \"{missing[0]}\" face "
+            f'{MOSFET} has no R_thJC for the "{missing[0]}" face '
             f"(available: {', '.join(available_faces)}). Fill in `r_thjc` in "
             "MOSFET_LIBRARY."
         )
@@ -431,7 +415,10 @@ def report_losses(res) -> None:
     section(3, "Loss budget [W]")
     dataframe(loss_table(res))
     blank()
-    kv("Total dissipated in the die", f"{res.p_total:.3f} W  (at Tj = {T_J_EVAL:.0f} °C)")
+    kv(
+        "Total dissipated in the die",
+        f"{res.p_total:.3f} W  (at Tj = {T_J_EVAL:.0f} °C)",
+    )
     kv("Off-package — driver", f"{res.p_gate_drv * 1e3:.0f} mW")
     kv("Off-package — external gate R", f"{res.p_gate_ext * 1e3:.0f} mW")
 

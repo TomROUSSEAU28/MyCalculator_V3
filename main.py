@@ -26,7 +26,7 @@ from SRC.MOSFET.mosfet_plot import (
     plot_thermal_iteration,
 )
 from SRC.OTHERS.plot import *
-
+from SRC.OTHERS.terminal import *
 import numpy as np
 
 OUTPUT = Path(__file__).parent / "OUTPUT"
@@ -34,6 +34,19 @@ OUTPUT = Path(__file__).parent / "OUTPUT"
 
 def main() -> None:
     OUTPUT.mkdir(exist_ok=True)
+
+    section(1, "SECTION 1")
+    kv("Lk", "4.45 uH")
+    kv("Lm", "9.45 uH")
+    section(2, "SECTION 2")
+    kv("Lk", "4.45 uH")
+    kv("Lm", "9.45 uH")
+    table1 = ["VOICI UN TITRE", "ET VOICI UN AUTRE"]
+    table2 = [["1", "2"], ["3", "4"]]
+    table(table1, table2)
+
+    alert("ok", "ya un probleme", "ok")
+
 
 if __name__ == "__main__":
     main()
