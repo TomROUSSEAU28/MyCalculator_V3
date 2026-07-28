@@ -21,7 +21,9 @@ Adding a theme is NOT a matter of taste — see the note above SERIES.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
+from typing import Any
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -35,6 +37,7 @@ __all__ = [
     "add_title",
     "annotate",
     "axis_labels",
+    "figure_to_svg",
     "grid",
     "new_figure",
     "reference_line",
@@ -251,7 +254,7 @@ def annotate(
     role: str = "ink_secondary",
     size: float = 9,
     bold: bool = False,
-    va: str | None = None,
+    va: str = "baseline",
 ) -> None:
     """
     A direct label in data coordinates, nudged by `offset` in points.
@@ -276,7 +279,7 @@ def annotate(
         fontweight="bold" if bold else "normal",
         color=c[role],
         fontfamily=FONT,
-        **({"va": va} if va else {}),
+        verticalalignment=va,
     )
 
 
@@ -330,12 +333,34 @@ _RASTER_FORMATS = frozenset({"png", "jpg", "jpeg", "tif", "tiff", "webp"})
 #                         converting it to paths. Smaller and editable, but the
 #                         viewer needs the font installed (see FONT: Segoe UI
 #                         on Windows, DejaVu Sans as fallback).
-_EXPORT_RC = {
+# Typed loosely on purpose: matplotlib's stubs want a Literal union for the
+# keys, which a plain dict of strings cannot satisfy.
+_EXPORT_RC: dict[Any, Any] = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
     "svg.fonttype": "none",
     "pdf.compression": 6,
 }
+
+
+def figure_to_svg(fig: Figure) -> str:
+    """
+    The figure as a standalone SVG string, cropped and themed like a saved one.
+
+    Same settings as save_figure(), nothing written to disk — for embedding a
+    figure into a page or a notebook cell (see SRC/OTHERS/notebook.py).
+    """
+    buffer = io.StringIO()
+    with mpl.rc_context(_EXPORT_RC):
+        fig.savefig(
+            buffer,
+            format="svg",
+            bbox_inches="tight",
+            pad_inches=0.06,
+            facecolor=fig.get_facecolor(),
+            edgecolor="none",
+        )
+    return buffer.getvalue()
 
 
 def save_figure(
