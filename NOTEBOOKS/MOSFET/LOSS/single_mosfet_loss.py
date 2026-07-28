@@ -62,16 +62,7 @@ D_BODY_PCT = 0.0  # diode conduction duty cycle [%]
 
 # Charge the turn-on has to sweep out of the facing diode, entered by hand.
 #
-# For a single MOSFET there is no possible "auto" mode: the diode that recovers
-# is NOT its own, it belongs to the facing device (parallel Schottky, freewheel
-# diode, opposite MOSFET...) — and this model knows nothing about it. So the
-# charge is entered directly, read off that part's Q_rr curve at the real di/dt
-# of the circuit (see section 4 of the report), or measured.
-#
-#   0 -> no recovery at all (ZCS, ZVS, GaN without a body diode)
-#
-# `BODY_DIODE.q_rr_at_condition(di_dt, v_r, i_f)` maps a datasheet test point
-# onto the real di/dt, which section 4 of the report prints.
+
 Q_RR_NC = 0.0  # [nC]
 
 # --- Thermal -----------------------------------------------------------------
@@ -96,11 +87,6 @@ R_TH_MANUAL = 20.0  # R_th junction -> ambient [°C/W], if R_TH_SOURCE == "manua
 #   standard FR4   (0.3,  1.6)      DBC Al2O3  (25.0,  0.38)
 #   IMS alu base   (2.0,  0.1)      DBC AlN    (170.0, 0.63)
 #
-# Two traps:
-#   - two "pcb" faces each declaring an opposite plane count the same copper
-#     twice: set A_cu_other_side_cm2 to 0 on one of them;
-#   - the "top" face is nearly always bad (R_thJC,top >> R_thJC,bottom), it only
-#     buys you something with a real heatsink glued onto it.
 FACES = {
     "bottom": {
         "mode": "pcb",
@@ -143,14 +129,16 @@ FACES = {
 # --- Output ------------------------------------------------------------------
 SHOW_PLOTS = False  # open the figures in a window
 SAVE_PLOTS = True  # write the figures to OUTPUT/
-PLOT_THEME = "light"  # "light" or "dark"
-# One file per format. "svg" / "pdf" are vector: they stay sharp whatever the
-# zoom or the print size, and that is what you want in a report or in LaTeX.
-# "png" is only there for what refuses anything else (a chat, a wiki, a mail).
+# Figure theme. "light" / "dark" are the neutral pair; "red", "blue" and "vivid"
+# are accent themes on a tinted black. Full list in SRC/OTHERS/plot.py.
+PLOT_THEME = "light"
+
 PLOT_FORMATS = ("png", "svg", "pdf")
 PLOT_DPI = 300  # raster resolution; ignored by svg / pdf
-# Report palette. "light" / "dark" match the two plot themes above; "mono"
-# drops colour, for a log file or a CI run. Full list in SRC/OTHERS/terminal.py.
+
+# Report palette. Same five names as PLOT_THEME, so a report and its figures
+# match; plus "mono", which drops colour for a log file or a CI run. The accent
+# themes assume a dark terminal. Full list in SRC/OTHERS/terminal.py.
 TERMINAL_THEME = "dark"
 OUTPUT_DIR = ROOT / "OUTPUT"
 
@@ -177,8 +165,8 @@ from SRC.MOSFET.mosfet_plot import (
     loss_table,
     plot_loss_breakdown,
     plot_thermal_iteration,
-    save_figure,
 )
+from SRC.OTHERS.plot import save_figure
 from SRC.OTHERS.terminal import (
     alert,
     blank,

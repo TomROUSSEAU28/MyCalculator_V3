@@ -25,6 +25,7 @@ from SRC.MOSFET.mosfet_plot import (
     plot_loss_breakdown,
     plot_thermal_iteration,
 )
+from SRC.OTHERS.plot import save_figure
 
 OUTPUT = Path(__file__).parent / "OUTPUT"
 
@@ -75,7 +76,7 @@ def main() -> None:
         subtitle=f"Hard switched, {V_BUS:.0f} V / {I_OUT:.0f} A / {F_SW / 1e3:.0f} kHz, "
         f"Tj = 100 °C — total {single.p_total:.2f} W",
     )
-    fig.savefig(OUTPUT / "single_loss.png", dpi=160, facecolor=fig.get_facecolor())
+    save_figure(fig, OUTPUT / "single_loss")
 
     # === 2. self-consistent junction temperature =============================
     thermal = loss_thermal_iteration(
@@ -93,14 +94,14 @@ def main() -> None:
         subtitle=f"R_th = {thermal.r_th:.0f} °C/W, T_amb = {T_AMBIENT:.0f} °C — "
         f"settles at {thermal.t_j:.0f} °C",
     )
-    fig.savefig(OUTPUT / "single_thermal.png", dpi=160, facecolor=fig.get_facecolor())
+    save_figure(fig, OUTPUT / "single_thermal")
 
     # Dark theme renders from the same data — the palette is re-stepped for the
     # dark surface, not flipped.
     fig = plot_loss_breakdown(
         single, title=f"{part} — loss breakdown", theme="dark"
     )
-    fig.savefig(OUTPUT / "single_loss_dark.png", dpi=160, facecolor=fig.get_facecolor())
+    save_figure(fig, OUTPUT / "single_loss_dark")
 
     print(f"\nFigures written to {OUTPUT}")
 

@@ -62,9 +62,28 @@ LABEL_WIDTH = 38  # width of the label column of kv()
 #   report.label  the left column of kv()   report.rule    section rules
 #   report.value  the right column of kv()  report.muted   asides, units
 #
-# "light" and "dark" mirror the plot palettes of SRC/MOSFET/mosfet_plot.py, so
-# a report and its figures look like they belong together. "mono" drops colour
-# entirely — for log files, CI output, and anything piped elsewhere.
+# Every theme here mirrors the plot palette of the same name in
+# SRC/OTHERS/plot.py, so a report and its figures look like they belong
+# together. "mono" drops colour entirely — for log files, CI output, and
+# anything piped elsewhere.
+#
+# Two things are different from the plots, and they set the rules below.
+#
+# A report has no surface we control: it prints onto whatever background the
+# terminal has. So the gate is not the categorical separation the figures are
+# held to, it is WCAG *text* contrast — every colour below was measured against
+# four plausible dark backgrounds (#000000, #1a1a19, #1e1e1e, #0c0c0c) and
+# clears 4.5:1 on all of them, except the accent titles, which are bold and
+# clear the 3:1 large-text gate (worst case 4.23:1, "vivid").
+#
+# And everything in a report is text, so the accent gets far less room than in
+# a figure: it carries the section headings and tints the rules, while values
+# stay white and the four alert colours stay put. An alert level is a status,
+# not decoration — "[ERROR]" has to look the same in every theme, or it stops
+# being something you can learn once.
+#
+# The three accent themes are dark-background only, like "dark" itself: on a
+# light terminal they are unreadable. Use "light" or "mono" there.
 THEMES: dict[str, dict[str, str]] = {
     "light": {
         "report.title": "bold #0b0b0b",
@@ -89,6 +108,54 @@ THEMES: dict[str, dict[str, str]] = {
         "report.header": "bold #c3c2b7",
         "report.border": "#383835",
         "report.rule": "#383835",
+        "report.error": "bold #ff6b6b",
+        "report.warn": "bold #eda100",
+        "report.info": "bold #3987e5",
+        "report.ok": "bold #34c759",
+    },
+    # Red on black. The section headings carry the accent; the rules are the
+    # same warm near-black step the figures use for their axes.
+    "red": {
+        "report.title": "bold #e66767",
+        "report.text": "#ebe2e2",
+        "report.label": "#cdc0c0",
+        "report.value": "bold #ffffff",
+        "report.muted": "#9a8d8d",
+        "report.header": "bold #cdc0c0",
+        "report.border": "#3a2c2d",
+        "report.rule": "#3a2c2d",
+        "report.error": "bold #ff6b6b",
+        "report.warn": "bold #eda100",
+        "report.info": "bold #3987e5",
+        "report.ok": "bold #34c759",
+    },
+    # Blue on black. Note the accent and "report.info" are the same blue here —
+    # the one overlap the fixed-status rule allows, since a blue [INFO] tag in a
+    # blue-titled report reads as the same family on purpose.
+    "blue": {
+        "report.title": "bold #3987e5",
+        "report.text": "#e2e6ec",
+        "report.label": "#c2cad6",
+        "report.value": "bold #ffffff",
+        "report.muted": "#8b95a3",
+        "report.header": "bold #c2cad6",
+        "report.border": "#2b3440",
+        "report.rule": "#2b3440",
+        "report.error": "bold #ff6b6b",
+        "report.warn": "bold #eda100",
+        "report.info": "bold #3987e5",
+        "report.ok": "bold #34c759",
+    },
+    # The loud one, on a plum black.
+    "vivid": {
+        "report.title": "bold #d55181",
+        "report.text": "#e8e2ec",
+        "report.label": "#cec7d6",
+        "report.value": "bold #ffffff",
+        "report.muted": "#968ea1",
+        "report.header": "bold #cec7d6",
+        "report.border": "#332c3b",
+        "report.rule": "#332c3b",
         "report.error": "bold #ff6b6b",
         "report.warn": "bold #eda100",
         "report.info": "bold #3987e5",
