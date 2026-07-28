@@ -28,4 +28,7 @@ pydantic
 
 ipywidgets
 
+rich[jupyter]
+rich
 
+ruff

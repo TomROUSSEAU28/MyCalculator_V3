@@ -1,107 +1,288 @@
 """
-Mise en forme des sorties terminal.
+Terminal report layout, built on rich.
 
-Rien de métier ici : uniquement la mise en page des scripts « feuille de
-calcul » (main.py, NOTEBOOKS/**/*.py). Un seul jeu de fonctions pour que tous
-les rapports du projet se lisent pareil.
+Nothing domain-specific here: only the presentation of the project's
+"spreadsheet" scripts (main.py, NOTEBOOKS/**/*.py). One set of helpers, so
+every report of the project reads the same way — in a terminal and in a
+Jupyter cell alike, since rich renders to both.
 
-    section(1, "Point de fonctionnement")
-    kv("Fréquence de découpage", "100 kHz")
-    table(["Front", "t [ns]", "vitesse"], [("t_ri", "11.3", "2.21 A/ns")])
-    alert("error", "Tension au-dessus du V_DSS max — claquage.")
+    use_theme("dark")
+    section(1, "Operating point")
+    kv("Switching frequency", "100 kHz")
+    table(["Edge", "t [ns]", "Slew rate"], [("t_ri", "11.3", "2.21 A/ns")])
+    alert("error", "Voltage above the V_DSS rating — breakdown.")
+
+Colours live in THEMES: one theme is a plain {style name: rich style} dict.
+Add an entry there, call use_theme("your-name") once at the top of your
+script, and every helper below follows — nothing else to change.
 """
 
 from __future__ import annotations
 
-import textwrap
+from collections.abc import Sequence
 
-WIDTH = 78  # largeur de référence des filets et du retour à la ligne
-INDENT = "  "
-LABEL_WIDTH = 38  # colonne des libellés de kv()
+from rich import box
+from rich.console import Console
+from rich.padding import Padding
+from rich.rule import Rule
+from rich.table import Table
+from rich.text import Text
+from rich.theme import Theme
 
-# Étiquette affichée par alert() selon le niveau. `prefix=` permet de la
-# remplacer ponctuellement sans inventer un nouveau niveau.
-ALERT_LABELS = {
-    "error": "ERREUR",
-    "warn": "ATTENTION",
-    "info": "INFO",
+__all__ = [
+    "THEMES",
+    "active_theme",
+    "alert",
+    "blank",
+    "console",
+    "dataframe",
+    "kv",
+    "paragraph",
+    "rule",
+    "section",
+    "table",
+    "use_theme",
+]
+
+WIDTH = 78  # report width, in characters
+INDENT = 2  # left margin of everything but the section rules
+LABEL_WIDTH = 38  # width of the label column of kv()
+
+
+# ============================================================================ #
+#  Themes
+# ============================================================================ #
+
+# Every theme defines the same style names, so no helper can ever land on a
+# missing colour. The names are semantic on purpose: "report.label" says what
+# the text is, not what it looks like — that is what makes a theme swappable.
+#
+#   report.title  section headings          report.header  table headers
+#   report.text   body text                 report.border  table rules
+#   report.label  the left column of kv()   report.rule    section rules
+#   report.value  the right column of kv()  report.muted   asides, units
+#
+# "light" and "dark" mirror the plot palettes of SRC/MOSFET/mosfet_plot.py, so
+# a report and its figures look like they belong together. "mono" drops colour
+# entirely — for log files, CI output, and anything piped elsewhere.
+THEMES: dict[str, dict[str, str]] = {
+    "light": {
+        "report.title": "bold #0b0b0b",
+        "report.text": "#0b0b0b",
+        "report.label": "#52514e",
+        "report.value": "bold #0b0b0b",
+        "report.muted": "#898781",
+        "report.header": "bold #52514e",
+        "report.border": "#c3c2b7",
+        "report.rule": "#c3c2b7",
+        "report.error": "bold #d03b3b",
+        "report.warn": "bold #b26a00",
+        "report.info": "bold #2a78d6",
+        "report.ok": "bold #007a3d",
+    },
+    "dark": {
+        "report.title": "bold #ffffff",
+        "report.text": "#e6e5e0",
+        "report.label": "#c3c2b7",
+        "report.value": "bold #ffffff",
+        "report.muted": "#898781",
+        "report.header": "bold #c3c2b7",
+        "report.border": "#383835",
+        "report.rule": "#383835",
+        "report.error": "bold #ff6b6b",
+        "report.warn": "bold #eda100",
+        "report.info": "bold #3987e5",
+        "report.ok": "bold #34c759",
+    },
+    "mono": {
+        "report.title": "bold",
+        "report.text": "none",
+        "report.label": "none",
+        "report.value": "bold",
+        "report.muted": "dim",
+        "report.header": "bold",
+        "report.border": "dim",
+        "report.rule": "dim",
+        "report.error": "bold",
+        "report.warn": "bold",
+        "report.info": "bold",
+        "report.ok": "bold",
+    },
 }
 
+DEFAULT_THEME = "dark"
 
-def rule(char: str = "=", width: int = WIDTH) -> None:
-    """Filet horizontal."""
-    print(char * width)
+# One console for the whole project, created once. highlight=False keeps rich
+# from colouring numbers on its own: in a report every value is already placed
+# by hand, and a second, uninvited colour code would only compete with it.
+console = Console(theme=Theme(THEMES[DEFAULT_THEME]), width=WIDTH, highlight=False)
+
+_active_theme = DEFAULT_THEME
 
 
-def section(n: int | str | None, title: str, width: int = WIDTH) -> None:
-    """Titre de section encadré. n = None pour un titre sans numéro."""
-    print()
-    rule("=", width)
-    print(f"  {title}" if n is None else f"  {n}.  {title}")
-    rule("=", width)
+def use_theme(name: str) -> None:
+    """
+    Switch the palette used by every helper below.
+
+    Call it once, before the first report line. The console object itself is
+    never replaced, so modules that imported it earlier keep working.
+    """
+    global _active_theme
+    if name not in THEMES:
+        raise ValueError(f"unknown theme {name!r} (available: {', '.join(THEMES)})")
+    console.push_theme(Theme(THEMES[name]))
+    _active_theme = name
+
+
+def active_theme() -> str:
+    """Name of the palette currently in use."""
+    return _active_theme
+
+
+# ============================================================================ #
+#  Blocks
+# ============================================================================ #
+
+
+def blank() -> None:
+    """One empty line, so every report breathes the same way."""
+    console.print()
+
+
+def _print_indented(renderable, indent: int) -> None:
+    """
+    Print a block shifted right by `indent`.
+
+    expand=False matters: left to itself, Padding stretches the block to the
+    full console width and pads every line with trailing spaces — invisible in
+    a terminal, but noise as soon as the report is piped into a file.
+    """
+    console.print(Padding(renderable, (0, 0, 0, indent), expand=False))
+
+
+def rule(title: str = "") -> None:
+    """Horizontal rule, with the title written into it when there is one."""
+    heading = Text(title, style="report.title") if title else ""
+    console.print(Rule(heading, style="report.rule", align="left"))
+
+
+def section(number: int | str | None, title: str) -> None:
+    """Section heading. number=None for a heading without one."""
+    blank()
+    rule(title if number is None else f"{number}.  {title}")
 
 
 def kv(
     label: str,
     value,
-    indent: str = INDENT,
+    indent: int = INDENT,
     label_width: int = LABEL_WIDTH,
 ) -> None:
-    """Une ligne « libellé ....... valeur »."""
-    print(f"{indent}{label:<{label_width}}{value}")
+    """
+    One "label ....... value" line.
+
+    soft_wrap keeps a long value (a file path, mostly) on its own line instead
+    of folding it back under the label column, where it would read as a second
+    label. It runs past the report width; the terminal deals with it.
+    """
+    line = Text(" " * indent)
+    line.append(f"{label:<{label_width}}", style="report.label")
+    line.append(str(value), style="report.value")
+    console.print(line, soft_wrap=True)
 
 
 def table(
-    headers: list[str],
-    rows: list[tuple],
-    indent: str = INDENT,
+    headers: Sequence[str],
+    rows: Sequence[Sequence],
+    indent: int = INDENT,
 ) -> None:
     """
-    Tableau à largeur de colonne automatique.
+    Column table, widths handled by rich.
 
-    Première colonne alignée à gauche (des libellés), les autres à droite (des
-    nombres). Les cellules sont converties en str : formate les flottants
-    toi-même avant d'appeler, c'est le seul endroit qui connaît les unités.
+    First column left-aligned (labels), the others right-aligned (numbers).
+    Cells are str()-ed as they come: format your floats before calling, the
+    caller is the only one that knows the units.
+
+    Everything goes in as Text rather than as a plain string, because a report
+    is full of "[W]", "[ns]", "[°C/W]" — which rich would otherwise read as
+    markup tags and swallow.
     """
-    grid = [[str(c) for c in headers]] + [[str(c) for c in row] for row in rows]
-    widths = [max(len(row[i]) for row in grid) for i in range(len(headers))]
+    grid = Table(
+        box=box.SIMPLE_HEAD,  # a single rule under the header, nothing else
+        header_style="report.header",
+        border_style="report.border",
+        show_edge=False,
+        pad_edge=False,
+        padding=(0, 2, 0, 0),
+    )
+    for position, header in enumerate(headers):
+        grid.add_column(
+            Text(str(header)), justify="left" if position == 0 else "right"
+        )
+    for row in rows:
+        grid.add_row(*(Text(str(cell)) for cell in row))
+    _print_indented(grid, indent)
 
-    def line(cells: list[str]) -> str:
-        justified = [
-            cell.ljust(widths[i]) if i == 0 else cell.rjust(widths[i])
-            for i, cell in enumerate(cells)
-        ]
-        return indent + "  ".join(justified).rstrip()
 
-    print(line(grid[0]))
-    print(indent + "  ".join("-" * w for w in widths))
-    for row in grid[1:]:
-        print(line(row))
+def dataframe(
+    frame,
+    float_format: str = "{:.4f}",
+    indent: int = INDENT,
+) -> None:
+    """
+    A pandas DataFrame as a report table — the index becomes the first column.
+
+    Duck-typed on purpose (index / columns / itertuples): this module stays
+    free of a pandas import, and of the load time that comes with it.
+    """
+    headers = [str(frame.index.name or "")] + [str(column) for column in frame.columns]
+    rows = [
+        [str(row[0])] + [_cell(value, float_format) for value in row[1:]]
+        for row in frame.itertuples(index=True, name=None)
+    ]
+    table(headers, rows, indent=indent)
 
 
-def paragraph(text: str, indent: str = INDENT, width: int = WIDTH) -> None:
-    """Texte libre replié à la largeur du rapport."""
-    for chunk in textwrap.wrap(text, width=width - len(indent)):
-        print(indent + chunk)
+def _cell(value, float_format: str) -> str:
+    return float_format.format(value) if isinstance(value, float) else str(value)
+
+
+def paragraph(text: str, indent: int = INDENT) -> None:
+    """Free text, wrapped to the report width."""
+    _print_indented(Text(text, style="report.text"), indent)
+
+
+# Tag written by alert() for each level, with the style that goes with it.
+# `prefix=` replaces the tag on the spot, without inventing a new level.
+ALERT_LEVELS: dict[str, tuple[str, str]] = {
+    "error": ("ERROR", "report.error"),
+    "warn": ("WARNING", "report.warn"),
+    "info": ("INFO", "report.info"),
+    "ok": ("OK", "report.ok"),
+}
 
 
 def alert(
     level: str,
     message: str,
     prefix: str | None = None,
-    indent: str = INDENT,
-    width: int = WIDTH,
+    indent: int = INDENT,
 ) -> None:
     """
-    Message signalé, replié et aligné sous son étiquette.
+    A flagged message, wrapped and hanging under its own tag.
 
-    level  : clé de ALERT_LABELS ("error", "warn", "info")
-    prefix : étiquette de remplacement, quand le niveau se dit autrement dans
-             le contexte (ex. "CALCUL IMPOSSIBLE" pour une erreur bloquante)
+    level  : key of ALERT_LEVELS ("error", "warn", "info", "ok")
+    prefix : replacement tag, for when the level goes by another name in
+             context (e.g. "CANNOT COMPUTE" for a blocking error)
+
+    The tag and the message are two cells of a grid, which is what keeps the
+    continuation lines aligned under the first word rather than under the tag.
     """
-    label = prefix if prefix is not None else ALERT_LABELS.get(level, level.upper())
-    lead = f"{indent}[{label}] "
-    lines = textwrap.wrap(message, width=width - len(lead)) or [""]
-    print(lead + lines[0])
-    for extra in lines[1:]:
-        print(" " * len(lead) + extra)
+    default_label, style = ALERT_LEVELS.get(level, (level.upper(), "report.text"))
+    label = default_label if prefix is None else prefix
+
+    line = Table.grid(padding=(0, 1))
+    line.add_column(no_wrap=True)
+    line.add_column(overflow="fold", max_width=WIDTH - indent - len(label) - 3)
+    line.add_row(Text(f"[{label}]", style=style), Text(message, style="report.text"))
+    _print_indented(line, indent)

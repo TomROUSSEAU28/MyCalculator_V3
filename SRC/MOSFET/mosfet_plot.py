@@ -8,6 +8,9 @@ Two figures, matching the two questions the model answers:
 Both render in a light or a dark theme.
 """
 
+from pathlib import Path
+
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.figure import Figure
@@ -320,6 +323,85 @@ def plot_thermal_iteration(
 
     fig.tight_layout()
     return fig
+
+
+# endregion
+
+
+# region export
+
+# Vector formats: the figure is stored as geometry, so it stays sharp at any
+# zoom and any print size. `dpi` is irrelevant for them (it only sets the
+# nominal size), which is why PNG is the odd one out below.
+_VECTOR_FORMATS = frozenset({"svg", "pdf", "eps"})
+_RASTER_FORMATS = frozenset({"png", "jpg", "jpeg", "tif", "tiff", "webp"})
+
+# Text-as-text, not text-as-outlines:
+#   pdf/ps.fonttype 42 -> embed TrueType, so the PDF stays searchable and the
+#                         labels remain editable in Illustrator / Inkscape.
+#   svg.fonttype "none" -> the SVG references the font by name instead of
+#                         converting it to paths. Smaller and editable, but the
+#                         viewer needs the font installed (see _FONT: Segoe UI
+#                         on Windows, DejaVu Sans as fallback).
+_EXPORT_RC = {
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+    "svg.fonttype": "none",
+    "pdf.compression": 6,
+}
+
+
+def save_figure(
+    fig: Figure,
+    path: str | Path,
+    formats: tuple[str, ...] = ("png", "svg", "pdf"),
+    dpi: int = 300,
+    transparent: bool = False,
+) -> list[Path]:
+    """
+    Write a figure once per requested format, at publication quality.
+
+    path    : destination WITHOUT extension (any extension given is dropped) —
+              one file per entry of `formats` is written next to it.
+    formats : "svg" / "pdf" / "eps" are vector (infinite zoom, the right choice
+              for a report, LaTeX, or Word); "png" and the other raster formats
+              honour `dpi`.
+    dpi     : raster resolution. 300 is print quality, 600 for a figure that
+              will be blown up. Ignored by the vector formats.
+    transparent : drop the theme surface so the figure takes the background of
+              the page it is dropped into. Careful with the dark theme — light
+              text on a white page is unreadable.
+
+    Returns the paths actually written.
+    """
+    base = Path(path).with_suffix("")
+    base.parent.mkdir(parents=True, exist_ok=True)
+
+    unknown = [f for f in formats if f.lower() not in _VECTOR_FORMATS | _RASTER_FORMATS]
+    if unknown:
+        raise ValueError(f"unsupported format(s): {', '.join(unknown)}")
+
+    written: list[Path] = []
+    with mpl.rc_context(_EXPORT_RC):
+        for fmt in formats:
+            fmt = fmt.lower()
+            target = base.with_suffix(f".{fmt}")
+            fig.savefig(
+                target,
+                format=fmt,
+                # Vector formats ignore dpi for the geometry, but it still sets
+                # the size any rasterised element is written at.
+                dpi=dpi,
+                # Crop to the ink: kills the whitespace tight_layout leaves and
+                # rescues a long label that would otherwise be clipped.
+                bbox_inches="tight",
+                pad_inches=0.06,
+                transparent=transparent,
+                facecolor="none" if transparent else fig.get_facecolor(),
+                edgecolor="none",
+            )
+            written.append(target)
+    return written
 
 
 # endregion

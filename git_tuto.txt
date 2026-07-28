@@ -19,3 +19,6 @@ Linux : git config --global core.autocrlf input
 Si powershell bloque l'execution de script : 
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
+ruff check .
+ruff check . --fix
+ruff format .
