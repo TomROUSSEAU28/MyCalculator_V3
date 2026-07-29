@@ -104,10 +104,6 @@ THEMES: dict[str, dict[str, str]] = {
         "axis": "#383835",
         "critical": "#d03b3b",
     },
-    # Red on a warm black. Caveat worth knowing: the series red and the fixed
-    # `critical` red are the same hue family (ΔE 9.9, under the 15 series
-    # floor), so a figure drawing both has to separate them by more than
-    # colour — a dashed rule and labels, as reference_line() does.
     "red": {
         "surface": "#151011",
         "ink": "#ffffff",
@@ -117,8 +113,6 @@ THEMES: dict[str, dict[str, str]] = {
         "axis": "#3a2c2d",
         "critical": "#d03b3b",
     },
-    # Blue on a cool black. The one accent theme with no status clash: its
-    # slot 1 sits ΔE 31.9 off the limit red.
     "blue": {
         "surface": "#0e1117",
         "ink": "#ffffff",
@@ -128,7 +122,6 @@ THEMES: dict[str, dict[str, str]] = {
         "axis": "#2b3440",
         "critical": "#d03b3b",
     },
-    # The loud one: the highest-chroma steps first, on a plum black.
     "vivid": {
         "surface": "#121014",
         "ink": "#ffffff",

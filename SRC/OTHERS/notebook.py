@@ -1,34 +1,3 @@
-"""
-A COMPLETE PANEL, END TO END
-----------------------------
-    from SRC.OTHERS.notebook import (
-        button, choice, group, number, panel, row, toggle, visible_when,
-    )
-
-    w_part   = choice("MOSFET:", ["BSC016N06NS"])
-    w_vbus   = number("Bus voltage [V]:", 48.0, step=1.0)
-    w_fsw    = number("Frequency [kHz]:", 100.0, step=10.0)
-    w_cooled = toggle("Cooled face", True)
-    w_rth    = number("R_th [°C/W]:", 20.0, step=1.0)
-
-    # The R_th field only means something when the face is cooled.
-    visible_when(w_rth, w_cooled, True)
-
-    def compute():
-        print(f"{w_part.value} at {w_vbus.value} V, {w_fsw.value} kHz")
-
-    go, out = button("Compute", compute)
-    panel(
-        row(
-            group("Component", [w_part]),
-            group("Operating point", [w_vbus, w_fsw]),
-            group("Thermal", [w_cooled, w_rth]),
-        ),
-        go, out,
-        run_now=go,   # fill the panel on first render, no click needed
-    )
-"""
-
 from __future__ import annotations
 
 import base64
@@ -110,8 +79,9 @@ _CAPTION_CSS = (
     'font: 500 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;'
     "color: currentColor; opacity: 0.65; margin: 6px 2px 0;"
 )
-_IMG_CSS = "width: 100%; height: auto; display: block; border-radius: 6px;"
-
+_IMG_CSS = "width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; border-radius: 6px;"
+#without scale 
+#_IMG_CSS = "width: 100%; height: auto; display: block; border-radius: 6px;"
 
 def _data_uri(path: Path) -> str:
     mime = _MIME.get(path.suffix.lower())
