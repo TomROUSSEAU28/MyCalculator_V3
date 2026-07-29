@@ -109,44 +109,7 @@ class Dowell_Winding_Structure(BaseModel):
             for layer in self.list_of_layers
         )
         
-    def physical_losses(self, freq: float, currents_rms: dict[WINDING_TYPE, float]) -> tuple[float, float]:
-        """
-        Retourne (Total_P_DC, Total_P_AC) avec la correction géométrique pour fil rond.
-        """
-        total_p_dc_true = 0.0
-        total_p_ac_true = 0.0
-        
-        for i, layer in enumerate(self.list_of_layers):
-            layer_current = currents_rms.get(layer.winding_type, 0.0)
-            if layer_current == 0.0:
-                continue
-                
-            # --- 1. Pertes DC vraies ---
-            r_dc_true = layer.dc_resistance_round()
-            p_dc_true = r_dc_true * (layer_current**2)
-            total_p_dc_true += p_dc_true
-            
-            # --- 2. Calcul Dowell pur (Carré) ---
-            delta_i = layer.delta(freq)
-            g1, g2 = self._dowell_G(delta_i)
-            H_i = self.field_at_boundary(i, currents_rms)
-            alpha_i = self.alpha(i, currents_rms)
-            
-            bracket = (1.0 + alpha_i**2) * g1 - 4.0 * alpha_i * g2
-            left_part = layer.MLT / (layer.height * layer.porosity * layer.sigma)
-            p_ac_dowell = left_part * (H_i**2) * bracket * layer.bw
-            
-            # --- 3. Extraction du vrai facteur Fr ---
-            r_dc_dowell = layer.dc_resistance_dowell()
-            p_dc_dowell = r_dc_dowell * (layer_current**2)
-            
-            Fr = p_ac_dowell / p_dc_dowell if p_dc_dowell > 0 else 1.0
-            
-            # --- 4. Application du Fr à la géométrie ronde ---
-            p_ac_true = Fr * p_dc_true
-            total_p_ac_true += p_ac_true
-            
-        return total_p_dc_true, total_p_ac_true
+    
 
 if __name__ == '__main__':
     freq_sw = 100e3                     
