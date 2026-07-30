@@ -196,15 +196,30 @@ class Layer(BaseModel):
 
 class Dowell_Winding_Structure(BaseModel):
     list_of_layers: list[Layer] = Field(default_factory=list)
+    outer_mmf_fraction: float = 0.0
+    """Fraction de la MMF totale absorbée par le chemin de retour EXTÉRIEUR.
+
+    0.0 : toute la MMF côté noyau intérieur (entrefer jambe centrale,
+          tore, noyau poudre) -> H = 0 sur la face externe. Cas normal.
+    1.0 : toute la MMF côté extérieur -> H = 0 sur la face interne.
+    0.5 : entrefer réparti également (E-core entrefer é sur 3 jambes).
+
+    Sans effet si Sigma n.I = 0 : les deux faces sont alors nulles.
+    """
 
     def add_layer(self, layer: Layer):
-        """Layers MUST be added inner -> outer (bobbin first, outward).
-        field_profile() and zero_field_side both depend on this order."""
+        """Les couches DOIVENT etre ajoutees de l'interieur vers l'exterieur
+        (celle contre le noyau en premier). field_profile() et
+        outer_mmf_fraction dependent de cet ordre."""
         self.list_of_layers.append(layer)
 
     def field_profile(self, currents: dict[WINDING_TYPE, float]) -> list[float]:
-        """Signed MMF staircase. Returns n+1 values: H[i] is the inner
-        face of layer i, H[i+1] its outer face."""
+        """Escalier de MMF signe. Renvoie n+1 valeurs : H[i] = face interne
+        de la couche i, H[i+1] = sa face externe.
+
+        Les marches viennent d'Ampere ; le calage vertical vient de
+        outer_mmf_fraction (condition aux limites imposee par le noyau).
+        """
         boundaries = [0.0]
         ampere_turns = 0.0
         for layer in self.list_of_layers:
@@ -214,7 +229,8 @@ class Dowell_Winding_Structure(BaseModel):
                 * layer.polarity.value
             )
             boundaries.append(ampere_turns / layer.bw)
-        return boundaries
+        shift = (1.0 - self.outer_mmf_fraction) * boundaries[-1]
+        return [h - shift for h in boundaries]
 
     def _dowell_G(self, delta: float) -> tuple[float, float]:
         if delta < 1e-3:
@@ -229,6 +245,16 @@ class Dowell_Winding_Structure(BaseModel):
             / den
         )
         return g1, g2
+
+    def net_ampere_turns(self, currents: dict[WINDING_TYPE, float]) -> float:
+        """Somme signee des ampere-tours. Doit valoir ~0 pour un vrai
+        transformateur, non nul pour une inductance couplee (flyback)."""
+        return sum(
+            layer.number_of_turns
+            * currents.get(layer.winding_type, 0.0)
+            * layer.polarity.value
+            for layer in self.list_of_layers
+        )
 
     def layer_losses(self, freq, currents) -> list[float]:
         """Per-layer loss in W. Same physics as loss_at_frequency."""

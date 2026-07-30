@@ -12,12 +12,17 @@ git clone https://github.com/TomROUSSEAU28/MyCalculator_V3.git
 pour update : 
 git pull
 
+on s'en fou de sauvegarde actuelle :
+git reset --hard
+
 pour ne pas faire croire que ya un changement du au difference entre mise en forme des saut de ligne entre os : 
 Windows : git config --global core.autocrlf true
 Linux : git config --global core.autocrlf input
 
 Si powershell bloque l'execution de script : 
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+
 
 ruff check .
 ruff check . --fix
