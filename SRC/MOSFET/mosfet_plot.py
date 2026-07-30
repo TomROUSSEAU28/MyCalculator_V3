@@ -193,8 +193,15 @@ def plot_thermal_iteration(
         if t_j_max is not None and abs(final - t_j_max) < 0.07 * y_span:
             dy = -13 if final <= t_j_max else 13
         annotate(
-            ax, theme, f"{final:.1f} °C", (len(values) - 1, final), (8, dy),
-            role="ink", size=10, bold=True, va="center",
+            ax,
+            theme,
+            f"{final:.1f} °C",
+            (len(values) - 1, final),
+            (8, dy),
+            role="ink",
+            size=10,
+            bold=True,
+            va="center",
         )
 
     # One curve only, so no legend box: the subtitle says what is plotted.
@@ -202,7 +209,9 @@ def plot_thermal_iteration(
         if result.converged:
             subtitle = f"Converged in {result.iterations} iterations"
         else:
-            subtitle = f"DID NOT CONVERGE in {result.iterations} iterations — thermal runaway"
+            subtitle = (
+                f"DID NOT CONVERGE in {result.iterations} iterations — thermal runaway"
+            )
     add_title(ax, theme, title, subtitle)
 
     fig.tight_layout()
