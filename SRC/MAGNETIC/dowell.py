@@ -5,7 +5,7 @@ from math import pi, sqrt
 from pathlib import Path
 
 import numpy as np
-from pydantic import BaseModel, Field, model_validator, warnings
+from pydantic import BaseModel, ConfigDict, Field, model_validator, warnings
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from SRC.constant import MU0, SIGMA_CU_20C
@@ -46,6 +46,12 @@ class Wire(BaseModel):
     height: float = 0.0  # Height of the wire
     sigma: float = SIGMA_CU_20C
     number_of_strands: int = 1  # Number of strands in the wire (for Litz wire)
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        frozen=True,  # objet immuable apres creation
+        extra="forbid",  # rejette un champ inconnu au lieu de l'ignorer
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "Wire":
@@ -94,6 +100,12 @@ class Layer(BaseModel):
     winding_type: WINDING_TYPE
     polarity: POLARITY  # Polarity of the layer (+1 or -1)
     current_divider: float = 1.0  # k pour une sous-couche Litz, 1 sinon
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        frozen=True,  # objet immuable apres creation
+        extra="forbid",  # rejette un champ inconnu au lieu de l'ignorer
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "Layer":
