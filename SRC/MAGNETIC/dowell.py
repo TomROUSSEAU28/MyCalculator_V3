@@ -19,10 +19,6 @@ def skin_depth(
     return sqrt(2.0 / (omega * MU0 * sigma * porosity))
 
 
-def porosity(number_of_turns: int, wire_diameter: float, winding_width: float) -> float:
-    return min((number_of_turns * wire_diameter) / winding_width, 1.0)
-
-
 class WINDING_TYPE(Enum):
     PRIMARY = "PRIMARY"
     SECONDARY = "SECONDARY"
@@ -51,12 +47,13 @@ class Wire(BaseModel):
 
 class Layer(BaseModel):
     name: str = ""
-    number_of_turns: int  # Number of turns in the winding layer
+    number_of_turns: float  # Number of turns in the winding layer
     bw: float  # Bandwidth of the winding layer (in meters)
     mlt: float  # Mean Length Turn (MLT) of the winding layer
     wire: Wire
     winding_type: WINDING_TYPE
     polarity: POLARITY  # Polarity of the layer (+1 or -1)
+    current_divider: float = 1.0  # k pour une sous-couche Litz, 1 sinon
 
     def porosity(self) -> float:
         """
@@ -73,14 +70,6 @@ class Layer(BaseModel):
             case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
                 # Pour un feuillard ou fil rectangulaire, on utilise sa largeur (width)
                 cu_width = self.number_of_turns * self.wire.width
-
-            case WIRE_TYPE.LITZ:
-                # Modèle de Dowell 1D : on étale virtuellement tous les brins face au champ
-                cu_width = (
-                    self.number_of_turns
-                    * self.effective_height()
-                    * sqrt(self.wire.number_of_strands)
-                )
 
             case _:
                 cu_width = 0.0
@@ -144,42 +133,6 @@ class Layer(BaseModel):
         # Formule universelle : R = L / (sigma * Surface)
         return total_length / (self.wire.sigma * area)
 
-    def dc_resistance_dowell(self) -> float:
-        """Résistance DC du conducteur virtuel (carré ou feuillard) vu par Dowell"""
-        match self.wire.wire_type:
-            case WIRE_TYPE.ROUND:
-                # Le carré équivalent a pour côté h_eff
-                dowell_area = self.effective_height() ** 2
-
-            case WIRE_TYPE.LITZ:
-                # Le Litz a N brins, donc N carrés équivalents de côté h_eff
-                dowell_area = (
-                    self.effective_height() ** 2
-                ) * self.wire.number_of_strands
-
-            case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
-                # Pour un feuillard, l'aire reste la largeur * la hauteur
-                dowell_area = self.wire.width * self.wire.height
-
-            case _:
-                dowell_area = 0.0
-
-        if dowell_area == 0.0 or self.wire.sigma == 0.0:
-            return float("inf")
-
-        return (self.mlt * self.number_of_turns) / (self.wire.sigma * dowell_area)
-
-    def dc_true_dc_dowell_ratio(self) -> float:
-        """Ratio entre la vraie résistance DC et la résistance DC de Dowell"""
-        true_dc = self.dc_resistance()
-        dowell_dc = self.dc_resistance_dowell()
-
-        # Sécurité pour éviter une division par zéro
-        if dowell_dc == 0.0:
-            return float("inf")
-
-        return true_dc / dowell_dc
-
     def dowell_area_ratio(self) -> float:
         """Doit valoir 1.0 : coherence entre la porosite et la vraie
         section de cuivre. Toute derive signale une erreur de definition."""
@@ -190,6 +143,34 @@ class Layer(BaseModel):
             return 1.0
 
         return implied_area / true_area
+
+    def expand(self) -> list["Layer"]:
+        """Litz -> sqrt(k) sous-couches de brins (Geng eq. 3).
+        Les autres types se renvoient eux-memes."""
+        if self.wire.wire_type != WIRE_TYPE.LITZ:
+            return [self]
+
+        k = self.wire.number_of_strands
+        n_sub = max(1, round(sqrt(k)))
+        strands_per_sub = k / n_sub
+        strand = Wire(
+            wire_type=WIRE_TYPE.ROUND,
+            diameter=self.wire.diameter,
+            sigma=self.wire.sigma,
+        )
+        return [
+            Layer(
+                name=f"{self.name}[{j + 1}/{n_sub}]",
+                number_of_turns=self.number_of_turns * strands_per_sub,
+                bw=self.bw,
+                mlt=self.mlt,
+                wire=strand,
+                winding_type=self.winding_type,
+                polarity=self.polarity,
+                current_divider=k,
+            )
+            for j in range(n_sub)
+        ]
 
 
 class Dowell_Winding_Structure(BaseModel):
@@ -211,19 +192,17 @@ class Dowell_Winding_Structure(BaseModel):
         outer_mmf_fraction dependent de cet ordre."""
         self.list_of_layers.append(layer)
 
-    def field_profile(self, currents: dict[WINDING_TYPE, float]) -> list[float]:
-        """Escalier de MMF signe. Renvoie n+1 valeurs : H[i] = face interne
-        de la couche i, H[i+1] = sa face externe.
+    def effective_layers(self) -> list[Layer]:
+        return [sub for lay in self.list_of_layers for sub in lay.expand()]
 
-        Les marches viennent d'Ampere ; le calage vertical vient de
-        outer_mmf_fraction (condition aux limites imposee par le noyau).
-        """
+    def field_profile(self, currents) -> list[float]:
         boundaries = [0.0]
         ampere_turns = 0.0
-        for layer in self.list_of_layers:
+        for layer in self.effective_layers():
             ampere_turns += (
                 layer.number_of_turns
                 * currents.get(layer.winding_type, 0.0)
+                / layer.current_divider
                 * layer.polarity.value
             )
             boundaries.append(ampere_turns / layer.bw)
@@ -259,7 +238,7 @@ class Dowell_Winding_Structure(BaseModel):
         H = self.field_profile(currents)
 
         losses = []
-        for i, layer in enumerate(self.list_of_layers):
+        for i, layer in enumerate(self.effective_layers()):
             assert abs(layer.dowell_area_ratio() - 1.0) < 1e-9, layer.name
             H_in, H_out = H[i], H[i + 1]
             h_eff, eta = layer.effective_height(), layer.porosity()
@@ -272,6 +251,16 @@ class Dowell_Winding_Structure(BaseModel):
                 layer.bw * layer.mlt * bracket / (h_eff * eta * layer.wire.sigma)
             )
         return losses
+
+    def losses_by_layer(self, freq, currents) -> list[float]:
+        """Pertes regroupees sur les couches d'origine (pas les sous-couches)."""
+        flat = self.layer_losses(freq, currents)
+        out, i = [], 0
+        for lay in self.list_of_layers:
+            n = len(lay.expand())
+            out.append(sum(flat[i : i + n]))
+            i += n
+        return out
 
     def loss_at_frequency(self, freq, currents) -> float:
         return sum(self.layer_losses(freq, currents))
@@ -316,7 +305,7 @@ if __name__ == "__main__":
             name="Secondaire",
             number_of_turns=26,
             bw=bw_total,
-            mlt=mlt,
+            mlt=mlt + 8 * 0.3e-3,  # bobine par-dessus le primaire
             wire=Wire(wire_type=WIRE_TYPE.ROUND, diameter=0.4e-3),
             winding_type=WINDING_TYPE.SECONDARY,
             polarity=POLARITY.NEGATIVE,
@@ -325,16 +314,16 @@ if __name__ == "__main__":
 
     layers = flyback_transfo.list_of_layers
 
-    # --- Géométrie ---
+    # --- Géométrie (sur les sous-couches vues par Dowell) ---
     print("=== GÉOMÉTRIE DES COUCHES ===")
     print(
-        f"{'Couche':<12}{'d [mm]':>9}{'h_eff [µm]':>12}{'eta':>8}"
+        f"{'Couche':<16}{'d [mm]':>9}{'h_eff [µm]':>12}{'eta':>8}"
         f"{'delta_pk [µm]':>15}{'Delta':>8}"
     )
-    for lay in layers:
+    for lay in flyback_transfo.effective_layers():
         eta = lay.porosity()
         print(
-            f"{lay.name:<12}{lay.wire.diameter * 1e3:>9.2f}"
+            f"{lay.name:<16}{lay.wire.diameter * 1e3:>9.2f}"
             f"{lay.effective_height() * 1e6:>12.1f}{eta:>8.3f}"
             f"{skin_depth(freq_sw, lay.wire.sigma, eta) * 1e6:>15.1f}"
             f"{lay.delta(freq_sw):>8.3f}"
@@ -346,11 +335,12 @@ if __name__ == "__main__":
     p_ac_total = 0.0
     print("=== PERTES PAR PHASE ET PAR COUCHE ===")
     for phase_name, currents in phases.items():
-        losses = flyback_transfo.layer_losses(freq_sw, currents)
+        losses = flyback_transfo.losses_by_layer(freq_sw, currents)
+        assert len(losses) == len(layers)
         H = flyback_transfo.field_profile(currents)
         print(f"\n--- Phase {phase_name} ---")
         print(f"  MMF aux frontières : {[f'{h:.0f}' for h in H]} A/m")
-        for i, (lay, p_ac) in enumerate(zip(layers, losses)):
+        for lay, p_ac in zip(layers, losses):
             i_rms = currents.get(lay.winding_type, 0.0)
             p_dc = lay.dc_resistance() * i_rms**2
             p_dc_total += p_dc
@@ -381,3 +371,26 @@ if __name__ == "__main__":
         f"Dowell ne converge pas vers le DC : {p_zero_f * 1e3:.2f} vs {p_dc_total * 1e3:.2f} mW"
     )
     print("\n  [OK] Dowell converge vers les pertes DC quand f -> 0")
+
+    # --- Test Litz : eclatement en sqrt(k) sous-couches ---
+    litz = Dowell_Winding_Structure()
+    litz.add_layer(
+        Layer(
+            name="Litz",
+            number_of_turns=20,
+            bw=bw_total,
+            mlt=mlt,
+            wire=Wire(wire_type=WIRE_TYPE.LITZ, diameter=0.1e-3, number_of_strands=19),
+            winding_type=WINDING_TYPE.PRIMARY,
+            polarity=POLARITY.POSITIVE,
+        )
+    )
+    c_litz = {WINDING_TYPE.PRIMARY: 0.5}
+    p_dc_litz = litz.dc_loss(c_litz)
+    assert len(litz.effective_layers()) == 4
+    assert len(litz.losses_by_layer(freq_sw, c_litz)) == 1
+    assert abs(litz.loss_at_frequency(1e-6, c_litz) - p_dc_litz) / p_dc_litz < 1e-9
+    print(
+        f"  [OK] Litz : {len(litz.effective_layers())} sous-couches, "
+        f"Fr = {litz.loss_at_frequency(freq_sw, c_litz) / p_dc_litz:.3f}"
+    )
