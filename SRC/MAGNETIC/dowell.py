@@ -68,7 +68,7 @@ class Layer(BaseModel):
 
         match self.wire.wire_type:
             case WIRE_TYPE.ROUND:
-                cu_width = self.number_of_turns * self.wire.diameter
+                cu_width = self.number_of_turns * self.effective_height()
 
             case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
                 # Pour un feuillard ou fil rectangulaire, on utilise sa largeur (width)
@@ -78,7 +78,7 @@ class Layer(BaseModel):
                 # Modèle de Dowell 1D : on étale virtuellement tous les brins face au champ
                 cu_width = (
                     self.number_of_turns
-                    * self.wire.diameter
+                    * self.effective_height()
                     * sqrt(self.wire.number_of_strands)
                 )
 
@@ -181,10 +181,8 @@ class Layer(BaseModel):
         return true_dc / dowell_dc
 
     def dowell_area_ratio(self) -> float:
-        """
-        Ratio entre la surface de cuivre du feuillard virtuel de Dowell et la vraie surface.
-        Vaut ~1.128 pour un fil rond, 1.0 pour un feuillard (FOIL/SQUARE).
-        """
+        """Doit valoir 1.0 : coherence entre la porosite et la vraie
+        section de cuivre. Toute derive signale une erreur de definition."""
         implied_area = self.bw * self.effective_height() * self.porosity()
         true_area = self.number_of_turns * self.copper_area()
 
@@ -259,8 +257,10 @@ class Dowell_Winding_Structure(BaseModel):
     def layer_losses(self, freq, currents) -> list[float]:
         """Per-layer loss in W. Same physics as loss_at_frequency."""
         H = self.field_profile(currents)
+
         losses = []
         for i, layer in enumerate(self.list_of_layers):
+            assert abs(layer.dowell_area_ratio() - 1.0) < 1e-9, layer.name
             H_in, H_out = H[i], H[i + 1]
             h_eff, eta = layer.effective_height(), layer.porosity()
             if (H_in == 0.0 and H_out == 0.0) or h_eff == 0.0 or eta == 0.0:
@@ -269,11 +269,7 @@ class Dowell_Winding_Structure(BaseModel):
             g1, g2 = self._dowell_G(layer.delta(freq))
             bracket = (H_out**2 + H_in**2) * g1 - 4.0 * H_out * H_in * g2
             losses.append(
-                layer.bw
-                * layer.mlt
-                * bracket
-                / (h_eff * eta * layer.wire.sigma)
-                * layer.dowell_area_ratio()
+                layer.bw * layer.mlt * bracket / (h_eff * eta * layer.wire.sigma)
             )
         return losses
 
