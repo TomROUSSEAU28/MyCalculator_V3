@@ -1,13 +1,16 @@
+import logging
 import sys
 from enum import Enum
 from math import pi, sqrt
 from pathlib import Path
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator, warnings
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from SRC.constant import MU0, SIGMA_CU_20C
+
+logger = logging.getLogger(__name__)
 
 
 def skin_depth(
@@ -44,6 +47,43 @@ class Wire(BaseModel):
     sigma: float = SIGMA_CU_20C
     number_of_strands: int = 1  # Number of strands in the wire (for Litz wire)
 
+    @model_validator(mode="after")
+    def _check(self) -> "Wire":
+        t = self.wire_type
+        if self.sigma <= 0.0:
+            raise ValueError("sigma doit etre > 0")
+
+        match t:
+            case WIRE_TYPE.ROUND | WIRE_TYPE.LITZ:
+                if self.diameter <= 0.0:
+                    raise ValueError(f"{t.value} : 'diameter' est obligatoire et > 0")
+                if self.width or self.height:
+                    raise ValueError(
+                        f"{t.value} : 'width'/'height' n'ont pas de sens pour un fil rond ou Litz, utiliser 'diameter'"
+                    )
+
+            case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
+                if self.width <= 0.0 or self.height <= 0.0:
+                    raise ValueError(
+                        f"{t.value} : 'width' et 'height' sont obligatoires et > 0"
+                    )
+                if self.diameter:
+                    raise ValueError(
+                        f"{t.value} : 'diameter' n'a pas de sens pour un fil rectangulaire ou feuillard, utiliser 'width' et 'height'"
+                    )
+
+        if t is WIRE_TYPE.LITZ:
+            if self.number_of_strands < 2:
+                raise ValueError(
+                    "LITZ : 'number_of_strands' doit valoir au moins 2 sinon utiliser ROUND"
+                )
+        elif self.number_of_strands != 1:
+            raise ValueError(
+                f"{t.value} : 'number_of_strands' ne s'applique qu'au LITZ"
+            )
+
+        return self
+
 
 class Layer(BaseModel):
     name: str = ""
@@ -54,6 +94,38 @@ class Layer(BaseModel):
     winding_type: WINDING_TYPE
     polarity: POLARITY  # Polarity of the layer (+1 or -1)
     current_divider: float = 1.0  # k pour une sous-couche Litz, 1 sinon
+
+    @model_validator(mode="after")
+    def _check(self) -> "Layer":
+        for f in ("number_of_turns", "bw", "mlt", "current_divider"):
+            if getattr(self, f) <= 0.0:
+                raise ValueError(f"'{f}' doit etre > 0 (couche '{self.name}')")
+
+        w = self.wire
+        strands = sqrt(w.number_of_strands)
+        if w.wire_type in (WIRE_TYPE.ROUND, WIRE_TYPE.LITZ):
+            cu_phys = self.number_of_turns * w.diameter * strands
+            cu_model = self.number_of_turns * self.effective_height() * strands
+        else:
+            cu_phys = cu_model = self.number_of_turns * w.width
+
+        if cu_model > self.bw:
+            logger.warning(
+                "couche '%s' : porosite plafonnee (%.1f mm de cuivre equivalent "
+                "pour bw = %.1f mm) -> resultat faux",
+                self.name,
+                cu_model * 1e3,
+                self.bw * 1e3,
+            )
+        elif cu_phys > self.bw and self.current_divider == 1.0:
+            logger.warning(
+                "couche '%s' : %.1f mm de fil pour bw = %.1f mm -> ne tient pas "
+                "sur une seule couche physique (le calcul reste valide)",
+                self.name,
+                cu_phys * 1e3,
+                self.bw * 1e3,
+            )
+        return self
 
     def porosity(self) -> float:
         """
