@@ -42,8 +42,19 @@ def main() -> None:
     signal = ElectronicPeriodicSignal.from_breakpoints(
         "triangle", [0.0, 5e-6, 10e-6], [0.0, 1.0, 0.0], n_samples=2048
     )
+    # triangle 10uS
+    signal2 = ElectronicPeriodicSignal.from_breakpoints(
+        "triangle",
+        [0.0, 5e-6, 10e-6, 15e-6, 20e-6],
+        [0.0, 0.5, 0.0, 0.5, 0.0],
+        n_samples=1024,
+    )
+
     fig = plot_periodic_signal_time_domain(
-        signal, title="Triangle Signal", subtitle="10 μs period", theme="dark"
+        [signal, signal2],
+        title="Triangle Signal",
+        subtitle="10 μs period",
+        theme="light",
     )
     save_figure(fig, OUTPUT / "triangle_signal_time_domain")
 
