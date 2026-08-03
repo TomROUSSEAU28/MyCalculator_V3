@@ -13,6 +13,8 @@ import matplotlib
 
 matplotlib.use("Agg")  # save to file, no interactive window needed
 
+import numpy as np
+
 from DATABASE.db_driver_mosfet import load_driver
 from DATABASE.db_mosfet import load_mosfet
 from SRC.MOSFET.mosfet_loss import (
@@ -27,7 +29,8 @@ from SRC.MOSFET.mosfet_plot import (
 )
 from SRC.OTHERS.plot import *
 from SRC.OTHERS.terminal import *
-import numpy as np
+from SRC.SIGNAL_PROCESSING.signal import *
+from SRC.SIGNAL_PROCESSING.signal_plot import *
 
 OUTPUT = Path(__file__).parent / "OUTPUT"
 
@@ -35,17 +38,14 @@ OUTPUT = Path(__file__).parent / "OUTPUT"
 def main() -> None:
     OUTPUT.mkdir(exist_ok=True)
 
-    section(1, "SECTION 1")
-    kv("Lk", "4.45 uH")
-    kv("Lm", "9.45 uH")
-    section(2, "SECTION 2")
-    kv("Lk", "4.45 uH")
-    kv("Lm", "9.45 uH")
-    table1 = ["VOICI UN TITRE", "ET VOICI UN AUTRE"]
-    table2 = [["1", "2"], ["3", "4"]]
-    table(table1, table2)
-
-    alert("ok", "ya un probleme", "ok")
+    # triangle 10uS
+    signal = ElectronicPeriodicSignal.from_breakpoints(
+        "triangle", [0.0, 5e-6, 10e-6], [0.0, 1.0, 0.0], n_samples=2048
+    )
+    fig = plot_periodic_signal_time_domain(
+        signal, title="Triangle Signal", subtitle="10 μs period", theme="dark"
+    )
+    save_figure(fig, OUTPUT / "triangle_signal_time_domain")
 
 
 if __name__ == "__main__":
