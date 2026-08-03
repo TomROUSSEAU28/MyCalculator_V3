@@ -210,6 +210,59 @@ def add_title(
         )
 
 
+from collections.abc import Sequence
+
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+
+
+def legend(
+    ax: Axes,
+    theme: str,
+    entries: Sequence[tuple[str, str]],
+    kind: str = "patch",
+    columns: int | None = None,
+) -> None:
+    """
+    A frameless legend above the axes, built from explicit (label, colour) pairs.
+
+    Only for a figure that cannot be direct-labelled — 3+ series that touch
+    (stacked bars, overlapping lines). One or two series: use annotate(), or
+    say it in the subtitle.
+
+    kind "patch" : bars, areas, stacks.   kind "line" : curves.
+
+    Never list a reference_line() here: `critical` is a status colour, and
+    the rule already carries its own label.
+    """
+    c = style(theme)
+    if kind not in ("patch", "line"):
+        raise ValueError(f"kind must be 'patch' or 'line', got {kind!r}")
+
+    handles = [
+        Patch(facecolor=colour, edgecolor="none", label=label)
+        if kind == "patch"
+        else Line2D([], [], color=colour, linewidth=2.0, label=label)
+        for label, colour in entries
+    ]
+
+    box = ax.legend(
+        handles=handles,
+        loc="lower left",
+        bbox_to_anchor=(0, 1.0),  # sit above the axes, aligned with the title
+        ncols=columns or len(handles),
+        frameon=False,  # the box is chrome we already removed
+        borderpad=0,
+        handlelength=1.1,
+        handletextpad=0.6,
+        columnspacing=1.5,
+        labelcolor=c["ink_secondary"],
+        fontsize=9,
+    )
+    for text in box.get_texts():
+        text.set_fontfamily(FONT)
+
+
 def axis_labels(
     ax: Axes,
     theme: str,
@@ -299,9 +352,7 @@ def reference_line(
     c = style(theme)
     if kind == "limit":
         ax.axhline(y, color=c["critical"], linewidth=1.5, linestyle="--", zorder=2)
-        annotate(
-            ax, theme, label, (0, y), offset or (2, 6), role="critical", bold=True
-        )
+        annotate(ax, theme, label, (0, y), offset or (2, 6), role="critical", bold=True)
     elif kind == "context":
         ax.axhline(y, color=c["axis"], linewidth=1.0, zorder=1)
         annotate(ax, theme, label, (0, y), offset or (8, -14), role="muted")
