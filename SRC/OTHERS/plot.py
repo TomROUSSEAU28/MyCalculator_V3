@@ -22,6 +22,7 @@ Adding a theme is NOT a matter of taste — see the note above SERIES.
 from __future__ import annotations
 
 import io
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,9 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.ticker import EngFormatter
 
 __all__ = [
     "FONT",
@@ -37,13 +41,17 @@ __all__ = [
     "add_title",
     "annotate",
     "axis_labels",
+    "engineering_ticks",
     "figure_to_svg",
     "grid",
+    "legend",
     "new_figure",
+    "new_grid",
     "reference_line",
     "save_figure",
     "series",
     "style",
+    "vertical_reference_line",
 ]
 
 
@@ -155,14 +163,14 @@ def series(theme: str) -> list[str]:
 # ============================================================================ #
 
 
-def new_figure(theme: str, figsize: tuple[float, float]) -> tuple[Figure, Axes]:
-    """A themed figure and its axes, chrome already recessive."""
-    c = style(theme)
-    fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor(c["surface"])
+def _dress(ax: Axes, c: dict[str, str]) -> None:
+    """
+    Recessive chrome on one axes: hairline, solid, one step off the surface.
+
+    The data is the only thing allowed to be loud. Shared by new_figure() and
+    new_grid(), so a panel of a grid is indistinguishable from a lone figure.
+    """
     ax.set_facecolor(c["surface"])
-    # Recessive chrome: hairline, solid, one step off the surface. The data is
-    # the only thing allowed to be loud.
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
@@ -171,7 +179,56 @@ def new_figure(theme: str, figsize: tuple[float, float]) -> tuple[Figure, Axes]:
     ax.tick_params(colors=c["muted"], labelsize=9, length=0)
     for label in ax.get_xticklabels() + ax.get_yticklabels():
         label.set_fontfamily(FONT)
+
+
+def new_figure(theme: str, figsize: tuple[float, float]) -> tuple[Figure, Axes]:
+    """A themed figure and its axes, chrome already recessive."""
+    c = style(theme)
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(c["surface"])
+    _dress(ax, c)
     return fig, ax
+
+
+def new_grid(
+    theme: str,
+    figsize: tuple[float, float],
+    rows: int = 2,
+    columns: int = 1,
+    height_ratios: Sequence[float] | None = None,
+    share_x: bool = False,
+) -> tuple[Figure, list[Axes]]:
+    """
+    Several themed panels on one figure, returned flat in reading order.
+
+    For the case where two views answer ONE question and have to be read
+    together — a signal and its spectrum, a waveform and its error. Two plots
+    that merely happen to be about the same part belong in two figures.
+
+    height_ratios : relative panel heights, e.g. (3, 2) to give the top panel
+                    more room. One entry per row.
+    share_x       : couple the x axes — only when the panels really share a
+                    quantity AND a range, otherwise it silently rescales one.
+    """
+    c = style(theme)
+    if height_ratios is not None and len(height_ratios) != rows:
+        raise ValueError(
+            f"height_ratios needs {rows} entries, got {len(height_ratios)}"
+        )
+
+    fig, _ = plt.subplots(
+        rows,
+        columns,
+        figsize=figsize,
+        sharex=share_x,
+        gridspec_kw=None if height_ratios is None else {"height_ratios": height_ratios},
+    )
+    fig.patch.set_facecolor(c["surface"])
+    # fig.axes rather than the returned array: always a flat list, whatever the
+    # shape, so a caller never has to know if it got a 1-D or 2-D grid back.
+    for ax in fig.axes:
+        _dress(ax, c)
+    return fig, fig.axes
 
 
 def add_title(
@@ -185,8 +242,17 @@ def add_title(
 
     The subtitle is where a single-series figure says what is plotted — which
     is what lets it skip the legend box entirely.
+
+    Call it LAST, after legend(): both write into the strip above the axes, and
+    the title makes room for the legend only if the legend is already there.
+    The reading order that comes out is title, subtitle, legend, then the data.
     """
     c = style(theme)
+    # 22 points of pad clears a subtitle, 12 clears nothing; a legend() strip
+    # is one 9 pt line plus its air.
+    pad = 22 if subtitle else 12
+    if ax.get_legend() is not None:
+        pad += 16
     ax.set_title(
         title,
         color=c["ink"],
@@ -194,13 +260,15 @@ def add_title(
         fontweight="bold",
         fontfamily=FONT,
         loc="left",
-        pad=22 if subtitle else 12,
+        pad=pad,
     )
     if subtitle:
         ax.annotate(
             subtitle,
             xy=(0, 1),
-            xytext=(0, 9),
+            # Same 16 points of clearance: the subtitle sits between the title
+            # and the legend, not on top of it.
+            xytext=(0, 9 if ax.get_legend() is None else 25),
             xycoords="axes fraction",
             textcoords="offset points",
             color=c["ink_secondary"],
@@ -208,12 +276,6 @@ def add_title(
             fontfamily=FONT,
             va="bottom",
         )
-
-
-from collections.abc import Sequence
-
-from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
 
 
 def legend(
@@ -275,6 +337,35 @@ def axis_labels(
         ax.set_xlabel(x, color=c["muted"], fontsize=9, fontfamily=FONT)
     if y is not None:
         ax.set_ylabel(y, color=c["muted"], fontsize=9, fontfamily=FONT)
+
+
+def engineering_ticks(
+    ax: Axes,
+    theme: str,
+    axis: str = "x",
+    unit: str = "",
+    places: int | None = None,
+) -> None:
+    """
+    Tick labels in engineering notation: 1e-05 becomes "10 µs", 2.4e6 "2.4 MHz".
+
+    Mandatory on any electronics axis. A time base of a few microseconds and a
+    spectrum reaching megahertz are unreadable in either scientific notation or
+    plain decimals — and a caller who rescales the DATA to get nice numbers
+    (dividing by 1e-6 to "plot in µs") then has to keep the unit of the label
+    and the unit of the values in sync by hand. Plot in SI, label here.
+
+    unit   : appended to every tick, e.g. "s", "Hz", "V", "A".
+    places : digits after the decimal point. None keeps matplotlib's own
+             choice, which drops the trailing zeros.
+    """
+    style(theme)  # same error for the same mistake, whichever way you ask
+    if axis not in ("x", "y"):
+        raise ValueError(f"axis must be 'x' or 'y', got {axis!r}")
+    target = ax.xaxis if axis == "x" else ax.yaxis
+    # Thin space before the unit: "10 µs" reads as one quantity, "10µs" does
+    # not, and a normal space is wide enough to look like two tokens.
+    target.set_major_formatter(EngFormatter(unit=unit, places=places, sep=" "))
 
 
 def grid(ax: Axes, theme: str, axis: str = "y") -> None:
@@ -358,6 +449,50 @@ def reference_line(
         annotate(ax, theme, label, (0, y), offset or (8, -14), role="muted")
     else:
         raise ValueError(f"kind must be 'limit' or 'context', got {kind!r}")
+
+
+def vertical_reference_line(
+    ax: Axes,
+    theme: str,
+    x: float,
+    label: str,
+    kind: str = "context",
+    offset: tuple[float, float] = (4, -4),
+) -> None:
+    """
+    A labelled vertical rule — reference_line(), turned a quarter turn.
+
+    Same two kinds, same reason for each: "limit" for a real threshold (a
+    bandwidth, a maximum frequency), "context" for the abscissa a reading is
+    relative to (the fundamental of a spectrum, an edge of a waveform).
+
+    The label rides at the top of the axes rather than at a y value, because
+    the rule spans the whole height and has no natural one.
+    """
+    c = style(theme)
+    if kind == "limit":
+        ax.axvline(x, color=c["critical"], linewidth=1.5, linestyle="--", zorder=2)
+        role, bold = "critical", True
+    elif kind == "context":
+        ax.axvline(x, color=c["axis"], linewidth=1.0, zorder=1)
+        role, bold = "muted", False
+    else:
+        raise ValueError(f"kind must be 'limit' or 'context', got {kind!r}")
+
+    ax.annotate(
+        label,
+        xy=(x, 1.0),
+        # x in data coordinates, y in axes fraction: the label tracks the rule
+        # sideways and stays pinned to the top edge however the y limits move.
+        xycoords=ax.get_xaxis_transform(),
+        xytext=offset,
+        textcoords="offset points",
+        color=c[role],
+        fontsize=9,
+        fontweight="bold" if bold else "normal",
+        fontfamily=FONT,
+        verticalalignment="top",
+    )
 
 
 # ============================================================================ #

@@ -25,10 +25,10 @@ from rich import box
 from rich.console import Console
 from rich.padding import Padding
 from rich.rule import Rule
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from rich.style import Style
 
 __all__ = [
     "THEMES",
