@@ -177,10 +177,18 @@ def _draw_time(
     c = style(theme)
 
     grid(ax, theme, axis="y")
+
+    # 1. On calcule la durée totale à afficher (le signal le plus lent * cycles)
+    max_duration = max(s.period() * cycles for s in signals)
+
     span = 0.0
     for position, signal in enumerate(signals):
         colour = palette[position]
-        time, value = _repeat(signal, cycles)
+
+        # 2. On adapte le nombre de cycles pour que chaque signal aille jusqu'au bout
+        local_cycles = max_duration / signal.period()
+
+        time, value = _repeat(signal, local_cycles)
         span = max(span, float(time[-1]))
         ax.plot(
             time,
