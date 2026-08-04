@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator, warnings
 
+from SRC.SIGNAL_PROCESSING.signal import *
+
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from SRC.constant import MU0, SIGMA_CU_20C
 
@@ -354,6 +356,103 @@ class Dowell_Winding_Structure(BaseModel):
             layer.dc_resistance() * (currents_rms.get(layer.winding_type, 0.0) ** 2)
             for layer in self.list_of_layers
         )
+
+    def dc_resistances(self) -> dict[WINDING_TYPE, float]:
+        """
+        Calcule la résistance DC totale propre à chaque enroulement.
+        Cette valeur est une constante purement géométrique.
+        """
+        resistances = {}
+        for lay in self.list_of_layers:
+            w_type = lay.winding_type
+            # On additionne la résistance de la couche à son enroulement
+            resistances[w_type] = resistances.get(w_type, 0.0) + lay.dc_resistance()
+
+        return resistances
+
+    def ac_resistances(self, freq: float) -> dict[WINDING_TYPE, float]:
+        """
+        Calcule la résistance AC propre à chaque enroulement à une fréquence donnée.
+
+        Méthodologie : On injecte 1A RMS dans l'enroulement à tester (et 0A dans
+        les autres). La perte active (en Watts) dans les couches de cet enroulement
+        devient alors mathématiquement égale à sa résistance AC (en Ohms).
+        """
+        resistances_ac = {}
+        # On identifie tous les types d'enroulements présents dans le transfo
+        windings = {lay.winding_type for lay in self.list_of_layers}
+
+        for w_type in windings:
+            # 1. On crée un scénario de test avec 1 Ampère dans cet enroulement
+            test_current = {w_type: 1.0}
+
+            # 2. On calcule les pertes de toutes les couches avec ce courant
+            losses = self.losses_by_layer(freq, test_current)
+
+            # 3. On additionne les pertes uniquement pour les couches qui
+            # appartiennent à l'enroulement que l'on est en train de tester.
+            r_ac = 0.0
+            for lay, p_loss in zip(self.list_of_layers, losses):
+                if lay.winding_type == w_type:
+                    r_ac += p_loss
+
+            resistances_ac[w_type] = r_ac
+
+        return resistances_ac
+
+    def harmonic_losses(
+        self,
+        signals: dict[WINDING_TYPE, "ElectronicPeriodicSignal"],
+        n_max: int = 40,
+        threshold: float = 0.0,
+    ) -> dict[str, float]:
+        """
+        Calcule les pertes totales par superposition harmonique.
+        Exploite le fait que tous les enroulements d'un convertisseur
+        partagent la même fréquence fondamentale (f_sw).
+        """
+        if not signals:
+            return {"P_dc": 0.0, "P_ac": 0.0, "P_total": 0.0}
+
+        # 1. On récupère la fréquence fondamentale (f_sw) partagée par tous
+        first_signal = next(iter(signals.values()))
+        f0 = first_signal.fundamental()
+
+        # 2. On extrait le spectre complet de chaque signal
+        spectra = {
+            w_type: sig.harmonics_rms(n_max, threshold)
+            for w_type, sig in signals.items()
+        }
+
+        total_dc_loss = 0.0
+        total_ac_loss = 0.0
+
+        # 3. Parcours harmonique par harmonique (de 0 à n_max)
+        for rank in range(n_max + 1):
+            # On extrait les courants RMS (en module) pour ce rang.
+            currents_rank = {
+                w_type: abs(spectrum.get(rank, 0j))
+                for w_type, spectrum in spectra.items()
+            }
+
+            # S'il n'y a aucune énergie significative sur ce rang pour
+            # aucun des enroulements, on économise du temps de calcul
+            if all(i == 0.0 for i in currents_rank.values()):
+                continue
+
+            if rank == 0:
+                # Rang 0 : Composante continue (0 Hz) -> Pertes Joules DC
+                total_dc_loss += self.dc_loss(currents_rank)
+            else:
+                # Rang n : Effet de peau et de proximité AC
+                freq = rank * f0
+                total_ac_loss += self.loss_at_frequency(freq, currents_rank)
+
+        return {
+            "P_dc": total_dc_loss,
+            "P_ac": total_ac_loss,
+            "P_total": total_dc_loss + total_ac_loss,
+        }
 
 
 if __name__ == "__main__":

@@ -55,6 +55,26 @@ def main():
         OUTPUT / "triangle.png",
         formats=("png",),
     )
+    figure2 = plot_spectrum(
+        [triangle, sinusoid],
+        title="Triangle vs sinusoid",
+        unit="V",
+        theme=THEME,
+    )
+    save_figure(
+        figure2,
+        OUTPUT / "triangle_spectrum.png",
+        formats=("png",),
+    )
+
+    figure3 = plot_signal(
+        triangle, title="Triangle vs sinusoid", unit="V", theme=THEME, fill=False
+    )
+    save_figure(
+        figure3,
+        OUTPUT / "triangle_signal.png",
+        formats=("png",),
+    )
 
     dataframe(signal_table([triangle, sinusoid], unit="V"))
 
