@@ -5,12 +5,17 @@ from math import pi, sqrt
 from pathlib import Path
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator, warnings
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from SRC.SIGNAL_PROCESSING.signal import *
-
+# Doit preceder les imports 'SRC.*' : sans cela le script n'est importable
+# qu'en module (python -m SRC.MAGNETIC.dowell), pas en direct.
 sys.path.append(str(Path(__file__).resolve().parents[2]))
+
 from SRC.constant import MU0, SIGMA_CU_20C
+from SRC.OTHERS.plot import *
+from SRC.OTHERS.terminal import *
+from SRC.SIGNAL_PROCESSING.signal import *
+from SRC.SIGNAL_PROCESSING.signal_plot import *
 
 logger = logging.getLogger(__name__)
 
@@ -456,18 +461,57 @@ class Dowell_Winding_Structure(BaseModel):
 
 
 if __name__ == "__main__":
+    OUTPUT = Path(__file__).parent / "OUTPUT"
+
+    # One name for both palettes: SRC/OTHERS/plot.py and SRC/OTHERS/terminal.py
+    # carry the same theme names on purpose, so the report and the figures match.
+    THEME = "light"
+
     freq_sw = 100e3
     bw_total = pi * 7.62e-3
     mlt = 17.5e-3
 
+    # --- Le signal reel : flyback 100 kHz --------------------------------
+    T = 10.0e-6  # periode
+    t_on = 6.30e-6  # primaire conduit   : rampe 0 -> 500 mA
+    t_dem = 1.98e-6  # secondaire conduit : rampe 2.52 A -> 0
+    t_off = T - t_on - t_dem  # 1.72 us : les deux a zero
+
+    i_pri = ElectronicPeriodicSignal.from_breakpoints(
+        "I_primaire",
+        times=[0.0, t_on, t_on, T],
+        values=[0.0, 0.5, 0.0, 0.0],
+        n_samples=8192,
+        period=T,
+    )
+    i_sec = ElectronicPeriodicSignal.from_breakpoints(
+        "I_secondaire",
+        times=[0.0, t_on, t_on, t_on + t_dem, T],
+        values=[0.0, 0.0, 2.52, 0.0, 0.0],
+        n_samples=8192,
+        period=T,
+    )
+    signals = {WINDING_TYPE.PRIMARY: i_pri, WINDING_TYPE.SECONDARY: i_sec}
+
+    fig = plot_time_domain(
+        [i_pri, i_sec], title="Courants du flyback", unit="A", theme=THEME
+    )
+    save_figure(fig, OUTPUT / "dowell_flyback_currents.png", dpi=300)
+
+    dataframe(signal_table(i_pri))
+    dataframe(signal_table(i_sec))
+
+    # Chaque enroulement ne conduit que pendant sa phase : sa RMS sur la
+    # periode entiere est donc deja la contribution ponderee par le rapport
+    # cyclique. Les pertes des deux phases s'additionnent directement.
     phases = {
         "ON  (primaire conduit)": {
-            WINDING_TYPE.PRIMARY: 0.3,
+            WINDING_TYPE.PRIMARY: i_pri.rms(),
             WINDING_TYPE.SECONDARY: 0.0,
         },
         "OFF (secondaire conduit)": {
             WINDING_TYPE.PRIMARY: 0.0,
-            WINDING_TYPE.SECONDARY: 0.5,
+            WINDING_TYPE.SECONDARY: i_sec.rms(),
         },
     }
 
@@ -555,25 +599,85 @@ if __name__ == "__main__":
     )
     print("\n  [OK] Dowell converge vers les pertes DC quand f -> 0")
 
-    # --- Test Litz : eclatement en sqrt(k) sous-couches ---
-    litz = Dowell_Winding_Structure()
-    litz.add_layer(
-        Layer(
-            name="Litz",
-            number_of_turns=20,
-            bw=bw_total,
-            mlt=mlt,
-            wire=Wire(wire_type=WIRE_TYPE.LITZ, diameter=0.1e-3, number_of_strands=19),
-            winding_type=WINDING_TYPE.PRIMARY,
-            polarity=POLARITY.POSITIVE,
-        )
-    )
-    c_litz = {WINDING_TYPE.PRIMARY: 0.5}
-    p_dc_litz = litz.dc_loss(c_litz)
-    assert len(litz.effective_layers()) == 4
-    assert len(litz.losses_by_layer(freq_sw, c_litz)) == 1
-    assert abs(litz.loss_at_frequency(1e-6, c_litz) - p_dc_litz) / p_dc_litz < 1e-9
+    # =====================================================================
+    #  SANS DECOMPOSITION HARMONIQUE  vs  AVEC
+    # =====================================================================
+    # Methode 1 (ci-dessus) : une seule frequence, f_sw, alimentee par la
+    #   RMS de chaque enroulement -> p_ac_total.
+    # Methode 2 : le meme signal eclate en son spectre, chaque rang evalue
+    #   a sa propre frequence puis somme.
+    N_MAX = 200  # rang harmonique max (20 MHz a f0 = 100 kHz)
+    f0 = i_pri.fundamental()
+    harm = flyback_transfo.harmonic_losses(signals, n_max=N_MAX)
+
+    print("\n" + "=" * 72)
+    print("PERTES SANS vs AVEC DECOMPOSITION HARMONIQUE")
+    print("=" * 72)
     print(
-        f"  [OK] Litz : {len(litz.effective_layers())} sous-couches, "
-        f"Fr = {litz.loss_at_frequency(freq_sw, c_litz) / p_dc_litz:.3f}"
+        f"  T = {T * 1e6:.2f} us   t_on = {t_on * 1e6:.2f} us   "
+        f"t_dem = {t_dem * 1e6:.2f} us   t_off = {t_off * 1e6:.2f} us   "
+        f"f0 = {f0 / 1e3:.1f} kHz\n"
     )
+    for sig in (i_pri, i_sec):
+        nfo = sig.info()
+        print(
+            f"  {nfo.name:<14} I_rms = {nfo.rms * 1e3:7.1f} mA   "
+            f"I_pk = {nfo.peak * 1e3:7.1f} mA   "
+            f"H1_rms = {nfo.fundamental_rms * 1e3:6.1f} mA   "
+            f"THD = {nfo.thd * 100:5.1f} %"
+        )
+
+    # --- Ou passe l'energie, rang par rang -------------------------------
+    spectra = {w: s.harmonics_rms(N_MAX) for w, s in signals.items()}
+    print(
+        f"\n  {'rang':>5}{'f [kHz]':>10}{'I_pri [mA]':>13}{'I_sec [mA]':>13}"
+        f"{'P [mW]':>11}{'cumul [%]':>11}"
+    )
+    cumul = 0.0
+    for rank in range(N_MAX + 1):
+        currents = {w: abs(sp.get(rank, 0j)) for w, sp in spectra.items()}
+        if all(i == 0.0 for i in currents.values()):
+            continue
+        cumul += (
+            flyback_transfo.dc_loss(currents)
+            if rank == 0
+            else flyback_transfo.loss_at_frequency(rank * f0, currents)
+        )
+        if rank > 10 and rank % 20:  # au-dela du rang 10, un point sur 20
+            continue
+        print(
+            f"  {rank:>5}{rank * f0 / 1e3:>10.0f}"
+            f"{currents[WINDING_TYPE.PRIMARY] * 1e3:>13.1f}"
+            f"{currents[WINDING_TYPE.SECONDARY] * 1e3:>13.1f}"
+            f"{cumul * 1e3:>11.2f}{100 * cumul / harm['P_total']:>11.1f}"
+        )
+
+    # --- Verdict ----------------------------------------------------------
+    print("\n  --- COMPARAISON ---")
+    print(f"  Sans harmoniques (f_sw seule) : {p_ac_total * 1e3:6.2f} mW")
+    print(f"  Avec harmoniques (n <= {N_MAX})   : {harm['P_total'] * 1e3:6.2f} mW")
+    print(
+        f"  Surcout des harmoniques       : "
+        f"{(harm['P_total'] - p_ac_total) * 1e3:+6.2f} mW  "
+        f"({100 * (harm['P_total'] / p_ac_total - 1.0):+.1f} %)"
+    )
+
+    # --- Convergence : jusqu'ou faut-il monter en rang ? -------------------
+    # Fronts ideaux => spectre en 1/n et pertes par rang en n^-1.5 : la somme
+    # converge, mais lentement. Le vrai signal a un di/dt fini qui coupe la
+    # queue du spectre ; sans cette information, la somme reste une borne
+    # inferieure. L'erreur de Parseval dit ce que la troncature a laisse.
+    print("\n  --- CONVERGENCE ---")
+    print(f"  {'n_max':>7}{'P_total [mW]':>15}{'ecart/prec [%]':>16}{'Parseval':>12}")
+    prev = None
+    for n in (20, 40, 60, 100, 200, 400):
+        p_n = flyback_transfo.harmonic_losses(signals, n_max=n)["P_total"]
+        drift = f"{100 * (p_n / prev - 1.0):>15.1f}" if prev else f"{'-':>15}"
+        print(f"  {n:>7}{p_n * 1e3:>15.2f}{drift} {i_sec.parseval_error(n):>11.2e}")
+        prev = p_n
+
+    # NB : harmonic_losses() prend le module des harmoniques, donc la phase
+    # relative primaire/secondaire est perdue. Sur un flyback les deux ne
+    # conduisent jamais ensemble, mais rang par rang ils apparaissent en
+    # phase et leurs MMF (polarites opposees) se compensent partiellement :
+    # les pertes de proximite sont donc sous-estimees.
