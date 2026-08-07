@@ -23,16 +23,18 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-from matplotlib.ticker import EngFormatter
+from matplotlib.ticker import EngFormatter, NullFormatter
 
 __all__ = [
     "FONT",
@@ -47,6 +49,7 @@ __all__ = [
     "legend",
     "new_figure",
     "new_grid",
+    "quantity",
     "reference_line",
     "save_figure",
     "series",
@@ -254,6 +257,7 @@ def legend(
     entries: Sequence[tuple[str, str]],
     kind: str = "patch",
     columns: int | None = None,
+    hatches: Sequence[str] | None = None,
 ) -> None:
     """
     A frameless legend above the axes, built from explicit (label, colour) pairs.
@@ -264,19 +268,47 @@ def legend(
 
     kind "patch" : bars, areas, stacks.   kind "line" : curves.
 
+    hatches : one matplotlib hatch per entry ("" for none), when the figure
+              encodes a SECOND variable as texture on top of the colour — a
+              winding cross-section coloured by winding and hatched by wire
+              type. A hatched swatch is drawn washed out with its outline in
+              the entry colour, exactly as the patch it stands for. "patch"
+              only: a hatch has nowhere to live on a 2 px line.
+
     Never list a reference_line() here: `critical` is a status colour, and
     the rule already carries its own label.
     """
     c = style(theme)
     if kind not in ("patch", "line"):
         raise ValueError(f"kind must be 'patch' or 'line', got {kind!r}")
+    if hatches is not None:
+        if kind != "patch":
+            raise ValueError("hatches= needs kind='patch'")
+        if len(hatches) != len(entries):
+            raise ValueError(
+                f"hatches needs {len(entries)} entries, got {len(hatches)}"
+            )
+    patterns = list(hatches) if hatches is not None else [""] * len(entries)
 
-    handles = [
-        Patch(facecolor=colour, edgecolor="none", label=label)
-        if kind == "patch"
-        else Line2D([], [], color=colour, linewidth=2.0, label=label)
-        for label, colour in entries
-    ]
+    handles: list[Patch | Line2D] = []
+    for (label, colour), hatch in zip(entries, patterns):
+        if kind == "line":
+            handles.append(Line2D([], [], color=colour, linewidth=2.0, label=label))
+        elif hatch:
+            # The hatch takes the edge colour, so a hatched swatch cannot be a
+            # flat block: colour goes to the outline and the strokes, and the
+            # fill drops to a wash so the texture stays the thing you read.
+            swatch = Patch(
+                facecolor=to_rgba(colour, 0.22),
+                edgecolor=colour,
+                hatch=hatch,
+                linewidth=1.0,
+                label=label,
+            )
+            swatch.set_hatch_linewidth(0.6)
+            handles.append(swatch)
+        else:
+            handles.append(Patch(facecolor=colour, edgecolor="none", label=label))
 
     box = ax.legend(
         handles=handles,
@@ -336,6 +368,32 @@ def engineering_ticks(
     # Thin space before the unit: "10 µs" reads as one quantity, "10µs" does
     # not, and a normal space is wide enough to look like two tokens.
     target.set_major_formatter(EngFormatter(unit=unit, places=places, sep=" "))
+    if target.get_scale() == "log":
+        # Under a couple of decades matplotlib starts labelling the minor ticks
+        # as well, in its own 10^n notation: an axis spanning 1.5 decades then
+        # reads "100 mW" next to "4 x 10^-1", and comparing two gridlines means
+        # converting between two notations. The decades carry the labels; the
+        # minor ticks keep their tick and lose their text.
+        #
+        # Which means: call this AFTER set_yscale("log"), or it cannot tell.
+        target.set_minor_formatter(NullFormatter())
+
+
+def quantity(value: float, unit: str = "", digits: int = 4) -> str:
+    """
+    A number the way an engineer writes it: 1e-05 -> "10 µs", 2.4e6 -> "2.4 MHz".
+
+    The text twin of engineering_ticks(): same formatter, so a value quoted in a
+    subtitle, a direct label or a table reads in the same units as the axis it
+    came from. Anything a figure spells out in prose goes through here.
+
+    Rounded to `digits` SIGNIFICANT digits rather than to a fixed number of
+    decimals: a peak resampled onto the time grid comes out at 5.99951 A, and
+    the last two digits are the sampling, not the signal. Fixed decimals cannot
+    do this — the same setting that tidies 5.99951 destroys 4.88281 ns.
+    """
+    rounded = float(f"{value:.{digits}g}") if isfinite(value) else value
+    return EngFormatter(unit=unit, sep=" ")(rounded)
 
 
 def grid(ax: Axes, theme: str, axis: str = "y") -> None:
@@ -413,12 +471,28 @@ def reference_line(
     c = style(theme)
     if kind == "limit":
         ax.axhline(y, color=c["critical"], linewidth=1.5, linestyle="--", zorder=2)
-        annotate(ax, theme, label, (0, y), offset or (2, 6), role="critical", bold=True)
+        role, bold, shift = "critical", True, offset or (2, 6)
     elif kind == "context":
         ax.axhline(y, color=c["axis"], linewidth=1.0, zorder=1)
-        annotate(ax, theme, label, (0, y), offset or (8, -14), role="muted")
+        role, bold, shift = "muted", False, offset or (8, -14)
     else:
         raise ValueError(f"kind must be 'limit' or 'context', got {kind!r}")
+
+    ax.annotate(
+        label,
+        xy=(0.0, y),
+        # y in data coordinates, x in axes fraction: the label rides the left
+        # edge whatever the limits are, and — unlike an anchor at data x = 0 —
+        # it survives an axis that does not contain zero. On a log frequency
+        # axis, x = 0 is minus infinity and the label simply never draws.
+        xycoords=ax.get_yaxis_transform(),
+        xytext=shift,
+        textcoords="offset points",
+        color=c[role],
+        fontsize=9,
+        fontweight="bold" if bold else "normal",
+        fontfamily=FONT,
+    )
 
 
 def vertical_reference_line(

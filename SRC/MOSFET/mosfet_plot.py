@@ -10,6 +10,8 @@ path are shared by every figure of the project and sit in SRC/OTHERS/plot.py —
 including save_figure(), which is where you import it from.
 """
 
+from __future__ import annotations
+
 import pandas as pd
 from matplotlib.figure import Figure
 
@@ -18,12 +20,20 @@ from SRC.OTHERS.plot import (
     add_title,
     annotate,
     axis_labels,
+    engineering_ticks,
     grid,
     new_figure,
+    quantity,
     reference_line,
     series,
     style,
 )
+
+__all__ = [
+    "loss_table",
+    "plot_loss_breakdown",
+    "plot_thermal_iteration",
+]
 
 # region data extraction
 
@@ -110,17 +120,24 @@ def plot_loss_breakdown(
 
     span = max(values) if max(values) > 0 else 1.0
     for y, value in enumerate(values):
-        # Bars carry their value at the tip — no tooltip to hide behind.
-        annotate(ax, theme, f"{value:.3f} W", (value, y), (6, 0), va="center")
+        # Bars carry their value at the tip — no tooltip to hide behind. In
+        # engineering notation, like the axis: a gate loss of 0.004 W and a
+        # conduction loss of 4.2 W belong on the same chart, and only "4 mW"
+        # next to "4.2 W" keeps both of them readable.
+        annotate(ax, theme, quantity(value, "W"), (value, y), (6, 0), va="center")
     ax.set_xlim(0, span * 1.18)
-    axis_labels(ax, theme, x="Power [W]")
+    engineering_ticks(ax, theme, axis="x", unit="W")
+    axis_labels(ax, theme, x="Power")
     grid(ax, theme, axis="x")
     for label in ax.get_yticklabels():
         label.set_color(style(theme)["ink_secondary"])
         label.set_fontsize(10)
     # A single series needs no legend box; the subtitle names what is plotted.
     add_title(
-        ax, theme, title, subtitle or f"Total dissipated in the die: {total:.3f} W"
+        ax,
+        theme,
+        title,
+        subtitle or f"Total dissipated in the die: {quantity(total, 'W')}",
     )
 
     fig.tight_layout()
@@ -151,7 +168,7 @@ def plot_thermal_iteration(
     # Iteration 0 is the seed, T_ambient — prepending it shows the whole climb
     # instead of dropping the reader into an already-hot plot.
     curves = [("Junction", [result.t_ambient] + list(result.history), palette[0])]
-    steps = range(0, len(curves[0][1]))
+    steps = range(len(curves[0][1]))
 
     fig, ax = new_figure(theme, (8.2, 4.4))
     grid(ax, theme, axis="y")

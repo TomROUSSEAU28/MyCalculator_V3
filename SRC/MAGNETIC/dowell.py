@@ -287,6 +287,12 @@ class Dowell_Winding_Structure(BaseModel):
         return [sub for lay in self.list_of_layers for sub in lay.expand()]
 
     def field_profile(self, currents) -> list[float]:
+        """MMF aux frontieres de couche, de l'interieur vers l'exterieur.
+
+        `currents` accepte des reels (un point de fonctionnement) ou des
+        PHASEURS COMPLEXES (un rang harmonique). Rien a changer ici : le
+        profil n'est qu'une somme ponderee des courants, donc il porte
+        l'angle de chacun sans le savoir."""
         boundaries = [0.0]
         ampere_turns = 0.0
         for layer in self.effective_layers():
@@ -325,7 +331,9 @@ class Dowell_Winding_Structure(BaseModel):
         )
 
     def layer_losses(self, freq, currents) -> list[float]:
-        """Per-layer loss in W. Same physics as loss_at_frequency."""
+        """Perte de chaque couche en W. Meme physique que loss_at_frequency.
+
+        `currents` reels ou COMPLEXES : voir field_profile()."""
         H = self.field_profile(currents)
 
         losses = []
@@ -337,7 +345,16 @@ class Dowell_Winding_Structure(BaseModel):
                 losses.append(0.0)
                 continue
             g1, g2 = self._dowell_G(layer.delta(freq))
-            bracket = (H_out**2 + H_in**2) * g1 - 4.0 * H_out * H_in * g2
+            # Forme HERMITIENNE de Dowell. Sur des H reels elle redonne
+            # exactement (H_out^2 + H_in^2).g1 - 4.H_out.H_in.g2, au bit pres.
+            # Sur des phaseurs, le terme croise devient la partie reelle du
+            # produit hermitien : deux MMF en quadrature ne se compensent pas,
+            # deux MMF en opposition se compensent completement. C'est ce que
+            # abs() detruisait, et le flyback est justement pres de la
+            # quadrature a ses premiers rangs.
+            bracket = (abs(H_out) ** 2 + abs(H_in) ** 2) * g1 - 4.0 * (
+                H_out * H_in.conjugate()
+            ).real * g2
             losses.append(
                 layer.bw * layer.mlt * bracket / (h_eff * eta * layer.wire.sigma)
             )
@@ -355,6 +372,23 @@ class Dowell_Winding_Structure(BaseModel):
 
     def loss_at_frequency(self, freq, currents) -> float:
         return sum(self.layer_losses(freq, currents))
+
+    def windings(self) -> list[WINDING_TYPE]:
+        """Les enroulements presents, dans l'ordre de bobinage.
+        Un set() rendrait l'ordre arbitraire : une couleur de courbe qui
+        change d'une execution a l'autre n'est pas un codage."""
+        return list(dict.fromkeys(lay.winding_type for lay in self.list_of_layers))
+
+    def losses_by_winding(self, freq, currents) -> dict[WINDING_TYPE, float]:
+        """Pertes regroupees par enroulement.
+
+        La perte d'un enroulement contient TOUT ce que dissipent ses couches,
+        y compris la proximite que le champ de l'autre lui impose : un
+        enroulement qui ne conduit pas peut donc etre au-dessus de zero."""
+        totals = dict.fromkeys(self.windings(), 0.0)
+        for lay, loss in zip(self.list_of_layers, self.losses_by_layer(freq, currents)):
+            totals[lay.winding_type] += loss
+        return totals
 
     def dc_loss(self, currents_rms: dict[WINDING_TYPE, float]) -> float:
         return sum(
@@ -375,35 +409,56 @@ class Dowell_Winding_Structure(BaseModel):
 
         return resistances
 
-    def ac_resistances(self, freq: float) -> dict[WINDING_TYPE, float]:
+    def ac_resistances(
+        self,
+        freq: float,
+        currents: dict[WINDING_TYPE, float] | None = None,
+    ) -> dict[WINDING_TYPE, float]:
         """
-        Calcule la résistance AC propre à chaque enroulement à une fréquence donnée.
+        Résistance AC de chaque enroulement à une fréquence donnée.
 
-        Méthodologie : On injecte 1A RMS dans l'enroulement à tester (et 0A dans
-        les autres). La perte active (en Watts) dans les couches de cet enroulement
-        devient alors mathématiquement égale à sa résistance AC (en Ohms).
+        DEUX conventions, parce qu'une résistance AC n'a pas de sens hors du
+        courant qui la traverse : la perte de Dowell est une forme QUADRATIQUE
+        des courants, donc elle contient des termes croisés entre enroulements.
+
+        currents = None : chaque enroulement est excité seul, 1 A RMS, les
+            autres à 0 (la perte en watts vaut alors numériquement la
+            résistance en ohms). C'est la résistance PROPRE : ce que mesure un
+            pont LCR les autres enroulements en l'air, et ce que voit
+            réellement un flyback, où un seul enroulement conduit à la fois.
+
+        currents = {...} : la résistance EFFECTIVE à ce point de
+            fonctionnement, R_i = P_i / I_i², tous les champs présents. C'est
+            la seule correcte dès que les enroulements conduisent ENSEMBLE
+            (forward, push-pull, LLC...) : leurs MMF opposées se compensent en
+            partie, et la résistance propre surestime alors la perte. La
+            somme des R_i·I_i² redonne exactement la perte totale.
+
+            Un enroulement qui ne porte pas de courant renvoie nan : sa perte
+            est bien réelle (proximité pure) mais elle n'est proportionnelle à
+            aucun courant qu'il transporte -> lire losses_by_winding().
+
+        Le flyback est le cas où les deux conventions coïncident, la perte
+        étant homogène de degré 2 : P(alpha.e_i) = alpha².P(e_i). Il se traite
+        en découpant les phases à l'extérieur, un appel par phase.
         """
-        resistances_ac = {}
-        # On identifie tous les types d'enroulements présents dans le transfo
-        windings = {lay.winding_type for lay in self.list_of_layers}
+        if currents is None:
+            # Un seul enroulement excité à la fois : la perte de SES couches
+            # sous 1 A est sa résistance propre.
+            return {
+                w_type: self.losses_by_winding(freq, {w_type: 1.0})[w_type]
+                for w_type in self.windings()
+            }
 
-        for w_type in windings:
-            # 1. On crée un scénario de test avec 1 Ampère dans cet enroulement
-            test_current = {w_type: 1.0}
-
-            # 2. On calcule les pertes de toutes les couches avec ce courant
-            losses = self.losses_by_layer(freq, test_current)
-
-            # 3. On additionne les pertes uniquement pour les couches qui
-            # appartiennent à l'enroulement que l'on est en train de tester.
-            r_ac = 0.0
-            for lay, p_loss in zip(self.list_of_layers, losses):
-                if lay.winding_type == w_type:
-                    r_ac += p_loss
-
-            resistances_ac[w_type] = r_ac
-
-        return resistances_ac
+        losses = self.losses_by_winding(freq, currents)
+        return {
+            w_type: (
+                losses[w_type] / current**2
+                if (current := currents.get(w_type, 0.0))
+                else float("nan")
+            )
+            for w_type in self.windings()
+        }
 
     def harmonic_losses(
         self,
@@ -412,9 +467,28 @@ class Dowell_Winding_Structure(BaseModel):
         threshold: float = 0.0,
     ) -> dict[str, float]:
         """
-        Calcule les pertes totales par superposition harmonique.
+        Pertes totales par superposition harmonique, PHASE COMPRISE.
+
         Exploite le fait que tous les enroulements d'un convertisseur
         partagent la même fréquence fondamentale (f_sw).
+
+        Le résultat est EXACT au sens du modèle de Dowell, pour n'importe
+        quelle forme d'onde et n'importe quelle topologie : le milieu est
+        linéaire et deux harmoniques de rangs différents sont orthogonales sur
+        la période, donc leurs pertes s'additionnent sans terme croisé. La
+        seule approximation restante est la troncature à n_max.
+
+        PASSER TOUS LES ENROULEMENTS ENSEMBLE, en un seul appel. Découper un
+        flyback en ses deux phases et sommer les deux appels est une erreur de
+        -19 % sur l'exemple du bas de ce fichier : le split traite la
+        transition d'une phase à l'autre comme si le champ y retournait à
+        zéro, alors que la face interne du primaire y passe de -641 à
+        +360 A/m d'un bloc. La diffusion dans le cuivre a de la mémoire, et
+        c'est cette excursion-là qui coûte.
+
+        Le découpage par phase garde en revanche tout son sens pour DESSINER :
+        un profil de MMF est celui d'un instant, il y en a bien un par phase
+        (voir SRC/MAGNETIC/dowell_plot.py).
         """
         if not signals:
             return {"P_dc": 0.0, "P_ac": 0.0, "P_total": 0.0}
@@ -434,9 +508,13 @@ class Dowell_Winding_Structure(BaseModel):
 
         # 3. Parcours harmonique par harmonique (de 0 à n_max)
         for rank in range(n_max + 1):
-            # On extrait les courants RMS (en module) pour ce rang.
+            # PHASEURS COMPLEXES, pas des modules : l'angle relatif entre
+            # enroulements décide si leurs MMF se compensent ou s'ajoutent, et
+            # il n'est 180° que sur les topologies où les courants sont
+            # homothétiques (forward, push-pull). Sur un LLC ou un DAB il vaut
+            # ce que la commande en a fait.
             currents_rank = {
-                w_type: abs(spectrum.get(rank, 0j))
+                w_type: spectrum.get(rank, 0j)
                 for w_type, spectrum in spectra.items()
             }
 
@@ -446,12 +524,15 @@ class Dowell_Winding_Structure(BaseModel):
                 continue
 
             if rank == 0:
-                # Rang 0 : Composante continue (0 Hz) -> Pertes Joules DC
-                total_dc_loss += self.dc_loss(currents_rank)
+                # Rang 0 : composante continue (0 Hz) -> pertes Joule DC.
+                # Aucun courant de Foucault à 0 Hz, donc aucune phase à
+                # conserver : harmonics_rms() rend d'ailleurs ce rang réel.
+                total_dc_loss += self.dc_loss(
+                    {w_type: abs(c) for w_type, c in currents_rank.items()}
+                )
             else:
-                # Rang n : Effet de peau et de proximité AC
-                freq = rank * f0
-                total_ac_loss += self.loss_at_frequency(freq, currents_rank)
+                # Rang n : effet de peau et de proximité AC
+                total_ac_loss += self.loss_at_frequency(rank * f0, currents_rank)
 
         return {
             "P_dc": total_dc_loss,
@@ -461,7 +542,7 @@ class Dowell_Winding_Structure(BaseModel):
 
 
 if __name__ == "__main__":
-    OUTPUT = Path(__file__).parent / "OUTPUT"
+    OUTPUT = Path(__file__).parent.parent.parent / "OUTPUT"
 
     # One name for both palettes: SRC/OTHERS/plot.py and SRC/OTHERS/terminal.py
     # carry the same theme names on purpose, so the report and the figures match.
@@ -682,8 +763,13 @@ if __name__ == "__main__":
         print(f"  {n:>7}{p_n * 1e3:>15.2f}{drift} {i_sec.parseval_error(n):>11.2e}")
         prev = p_n
 
-    # NB : harmonic_losses() prend le module des harmoniques, donc la phase
-    # relative primaire/secondaire est perdue. Sur un flyback les deux ne
-    # conduisent jamais ensemble, mais rang par rang ils apparaissent en
-    # phase et leurs MMF (polarites opposees) se compensent partiellement :
-    # les pertes de proximite sont donc sous-estimees.
+    # NB : harmonic_losses() garde les phaseurs complexes, donc le nombre
+    # ci-dessus est celui des deux enroulements PRIS ENSEMBLE, avec leur
+    # dephasage reel. Ne pas le comparer a une somme d'appels par phase :
+    # celle-ci vaut 45.9 mW contre 56.6 mW ici, parce qu'elle traite le
+    # passage ON -> OFF comme si le champ y retournait a zero alors que la
+    # face interne du primaire y bascule de -641 a +360 A/m.
+    #
+    # Les pertes par phase calculees plus haut (p_ac_total) restent, elles,
+    # l'approximation "toute la RMS a f_sw" : utile pour lire une couche a
+    # couche, pas pour un budget thermique.
