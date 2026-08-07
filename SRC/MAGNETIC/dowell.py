@@ -1,4 +1,20 @@
-import logging
+"""
+Modele de Dowell : pertes cuivre (peau + proximite) d'un bobinage, couche par
+couche.
+
+Principe : la perte d'une couche depend du champ H a ses DEUX faces, donc de
+l'endroit ou elle est empilee, pas seulement de ce qu'elle est.
+
+Regle d'usage :
+    harmonic_losses(tous_les_signaux) -> le nombre a mettre dans un budget
+    thermique. Un seul appel, tous les enroulements, toutes les topologies.
+
+Tout le reste (loss_at_frequency, ac_resistances, field_profile) sert a lire
+un point de fonctionnement ou a tracer, pas a chiffrer.
+"""
+
+from __future__ import annotations
+
 import sys
 from enum import Enum
 from math import pi, sqrt
@@ -12,21 +28,26 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from SRC.constant import MU0, SIGMA_CU_20C
-from SRC.OTHERS.plot import *
-from SRC.OTHERS.terminal import *
-from SRC.SIGNAL_PROCESSING.signal import *
-from SRC.SIGNAL_PROCESSING.signal_plot import *
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "POLARITY",
+    "WINDING_TYPE",
+    "WIRE_TYPE",
+    "Dowell_Winding_Structure",
+    "Layer",
+    "Wire",
+    "skin_depth",
+]
 
 
 def skin_depth(
     freq: float, sigma: float = SIGMA_CU_20C, porosity: float = 1.0
 ) -> float:
+    """Epaisseur de peau [m]. La porosite corrige la conductivite vue par
+    la couche : moins de cuivre en largeur, peau apparente plus grande."""
     if freq < 1e-3:
         return float("inf")
-    omega = 2.0 * pi * freq
-    return sqrt(2.0 / (omega * MU0 * sigma * porosity))
+    return sqrt(2.0 / (2.0 * pi * freq * MU0 * sigma * porosity))
 
 
 class WINDING_TYPE(Enum):
@@ -46,22 +67,25 @@ class POLARITY(Enum):
     NEGATIVE = -1
 
 
+# ============================================================================ #
+#  Conducteur
+# ============================================================================ #
+
+
 class Wire(BaseModel):
+    """Un conducteur. ROUND/LITZ -> diameter. SQUARE/FOIL -> width + height."""
+
     wire_type: WIRE_TYPE
     diameter: float = 0.0
-    width: float = 0.0  # Width of the wire (for square or foil wire)
-    height: float = 0.0  # Height of the wire
+    width: float = 0.0
+    height: float = 0.0
     sigma: float = SIGMA_CU_20C
-    number_of_strands: int = 1  # Number of strands in the wire (for Litz wire)
+    number_of_strands: int = 1  # LITZ uniquement
 
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        frozen=True,  # objet immuable apres creation
-        extra="forbid",  # rejette un champ inconnu au lieu de l'ignorer
-    )
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     @model_validator(mode="after")
-    def _check(self) -> "Wire":
+    def _check(self) -> Wire:
         t = self.wire_type
         if self.sigma <= 0.0:
             raise ValueError("sigma doit etre > 0")
@@ -69,181 +93,142 @@ class Wire(BaseModel):
         match t:
             case WIRE_TYPE.ROUND | WIRE_TYPE.LITZ:
                 if self.diameter <= 0.0:
-                    raise ValueError(f"{t.value} : 'diameter' est obligatoire et > 0")
+                    raise ValueError(f"{t.value} : 'diameter' obligatoire et > 0")
                 if self.width or self.height:
-                    raise ValueError(
-                        f"{t.value} : 'width'/'height' n'ont pas de sens pour un fil rond ou Litz, utiliser 'diameter'"
-                    )
+                    raise ValueError(f"{t.value} : utiliser 'diameter', pas w/h")
 
             case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
                 if self.width <= 0.0 or self.height <= 0.0:
-                    raise ValueError(
-                        f"{t.value} : 'width' et 'height' sont obligatoires et > 0"
-                    )
+                    raise ValueError(f"{t.value} : 'width' et 'height' > 0")
                 if self.diameter:
-                    raise ValueError(
-                        f"{t.value} : 'diameter' n'a pas de sens pour un fil rectangulaire ou feuillard, utiliser 'width' et 'height'"
-                    )
+                    raise ValueError(f"{t.value} : utiliser w/h, pas 'diameter'")
 
         if t is WIRE_TYPE.LITZ:
             if self.number_of_strands < 2:
-                raise ValueError(
-                    "LITZ : 'number_of_strands' doit valoir au moins 2 sinon utiliser ROUND"
-                )
+                raise ValueError("LITZ : au moins 2 brins, sinon utiliser ROUND")
         elif self.number_of_strands != 1:
-            raise ValueError(
-                f"{t.value} : 'number_of_strands' ne s'applique qu'au LITZ"
-            )
+            raise ValueError(f"{t.value} : 'number_of_strands' est propre au LITZ")
 
         return self
 
 
+# ============================================================================ #
+#  Couche
+# ============================================================================ #
+
+
 class Layer(BaseModel):
+    """Une couche de bobinage.
+
+    bw  : largeur de fenetre [m]
+    mlt : longueur moyenne d'une spire [m]
+    polarity : sens du bobinage, decide si sa MMF s'ajoute ou se retranche
+    current_divider : k pour une sous-couche Litz, 1 sinon
+    """
+
     name: str = ""
-    number_of_turns: float  # Number of turns in the winding layer
-    bw: float  # Bandwidth of the winding layer (in meters)
-    mlt: float  # Mean Length Turn (MLT) of the winding layer
+    number_of_turns: float
+    bw: float
+    mlt: float
     wire: Wire
     winding_type: WINDING_TYPE
-    polarity: POLARITY  # Polarity of the layer (+1 or -1)
-    current_divider: float = 1.0  # k pour une sous-couche Litz, 1 sinon
+    polarity: POLARITY
+    current_divider: float = 1.0
 
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        frozen=True,  # objet immuable apres creation
-        extra="forbid",  # rejette un champ inconnu au lieu de l'ignorer
-    )
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     @model_validator(mode="after")
-    def _check(self) -> "Layer":
+    def _check(self) -> Layer:
         for f in ("number_of_turns", "bw", "mlt", "current_divider"):
             if getattr(self, f) <= 0.0:
                 raise ValueError(f"'{f}' doit etre > 0 (couche '{self.name}')")
 
-        w = self.wire
-        strands = sqrt(w.number_of_strands)
-        if w.wire_type in (WIRE_TYPE.ROUND, WIRE_TYPE.LITZ):
-            cu_phys = self.number_of_turns * w.diameter * strands
-            cu_model = self.number_of_turns * self.effective_height() * strands
-        else:
-            cu_phys = cu_model = self.number_of_turns * w.width
+        if self.wire.wire_type is WIRE_TYPE.LITZ:
+            return self  # le parent Litz n'est jamais evalue, seul expand() l'est
 
-        if cu_model > self.bw:
-            logger.warning(
-                "couche '%s' : porosite plafonnee (%.1f mm de cuivre equivalent "
-                "pour bw = %.1f mm) -> resultat faux",
-                self.name,
-                cu_model * 1e3,
-                self.bw * 1e3,
+        # Le cuivre doit tenir dans bw. Au-dela, porosity() sature a 1.0 et le
+        # modele rend un resultat faux en silence : on refuse la couche.
+        cu = self.number_of_turns * (
+            self.effective_height()
+            if self.wire.wire_type is WIRE_TYPE.ROUND
+            else self.wire.width
+        )
+        if cu > self.bw * (1.0 + 1e-12):
+            raise ValueError(
+                f"couche '{self.name}' : {cu * 1e3:.2f} mm de cuivre pour "
+                f"bw = {self.bw * 1e3:.2f} mm -> reduire le nombre de spires "
+                f"ou repartir sur plusieurs couches"
             )
-        elif cu_phys > self.bw and self.current_divider == 1.0:
-            logger.warning(
-                "couche '%s' : %.1f mm de fil pour bw = %.1f mm -> ne tient pas "
-                "sur une seule couche physique (le calcul reste valide)",
-                self.name,
-                cu_phys * 1e3,
-                self.bw * 1e3,
-            )
+
+        # Invariant de Dowell : la section implicite (bw x h_eff x eta) doit
+        # egaler la vraie section de cuivre. Verifie ici, une fois, plutot que
+        # dans la boucle de calcul.
+        implied = self.bw * self.effective_height() * self.porosity()
+        true_area = self.number_of_turns * self.copper_area()
+        if true_area > 0.0 and abs(implied / true_area - 1.0) > 1e-9:
+            raise ValueError(f"couche '{self.name}' : geometrie incoherente")
+
         return self
 
-    def porosity(self) -> float:
-        """
-        Calcule le facteur de porosité (eta) de la couche.
-        C'est le ratio entre la largeur totale de cuivre et la largeur de la fenêtre (bw).
-        """
-        if self.bw <= 0.0:
-            return 1.0  # Sécurité pour éviter une division par zéro
-
-        match self.wire.wire_type:
-            case WIRE_TYPE.ROUND:
-                cu_width = self.number_of_turns * self.effective_height()
-
-            case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
-                # Pour un feuillard ou fil rectangulaire, on utilise sa largeur (width)
-                cu_width = self.number_of_turns * self.wire.width
-
-            case _:
-                cu_width = 0.0
-
-        # La porosité ne peut théoriquement pas dépasser 1.0 (100% de remplissage)
-        return min(cu_width / self.bw, 1.0)
-
-    def delta(self, freq: float) -> float:
-        """Calcule le ratio d'épaisseur normalisée de Dowell (Delta)"""
-        h_eff = self.effective_height()
-        return h_eff / skin_depth(freq, self.wire.sigma, self.porosity())
-
     def effective_height(self) -> float:
-        """
-        Calcule l'épaisseur effective de la couche (h_eff).
-        Applique la transformation en carré équivalent pour les fils ronds et Litz.
-        """
+        """Epaisseur equivalente [m]. Un fil rond est remplace par le carre de
+        meme section, c'est l'hypothese de base de Dowell."""
         match self.wire.wire_type:
             case WIRE_TYPE.ROUND | WIRE_TYPE.LITZ:
                 return self.wire.diameter * sqrt(pi / 4.0)
-
             case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
                 return self.wire.height
-
             case _:
                 return 0.0
 
+    def porosity(self) -> float:
+        """eta : part de la largeur de fenetre reellement occupee par du cuivre."""
+        match self.wire.wire_type:
+            case WIRE_TYPE.ROUND:
+                cu = self.number_of_turns * self.effective_height()
+            case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
+                cu = self.number_of_turns * self.wire.width
+            case _:
+                return 0.0
+        return min(cu / self.bw, 1.0)
+
+    def delta(self, freq: float) -> float:
+        """Epaisseur normalisee de Dowell : h_eff / epaisseur de peau.
+        Delta < 1 -> le courant remplit le conducteur. Delta > 1 -> il ne
+        conduit plus que sur sa peau."""
+        return self.effective_height() / skin_depth(
+            freq, self.wire.sigma, self.porosity()
+        )
+
     def copper_area(self) -> float:
-        """Surface de cuivre de la section du fil (en m²)"""
+        """Section de cuivre d'un conducteur [m2]."""
         match self.wire.wire_type:
             case WIRE_TYPE.ROUND:
                 return pi * (self.wire.diameter / 2.0) ** 2
-
             case WIRE_TYPE.SQUARE | WIRE_TYPE.FOIL:
-                if self.wire.width <= 0.0 or self.wire.height <= 0.0:
-                    raise ValueError(
-                        "Width and height must be positive for square or foil wire."
-                    )
                 return self.wire.width * self.wire.height
-
             case WIRE_TYPE.LITZ:
-                # La surface totale est la somme de la surface de tous les brins
                 return (
                     self.wire.number_of_strands * pi * (self.wire.diameter / 2.0) ** 2
                 )
-
             case _:
                 return 0.0
 
     def dc_resistance(self) -> float:
-        """Vraie résistance DC de la couche entière (en Ohms)"""
+        """R = L / (sigma . S) sur toute la couche [Ohm]."""
         area = self.copper_area()
-
-        # Sécurité pour éviter une division par zéro
-        if area == 0.0 or self.wire.sigma == 0.0:
+        if area <= 0.0:
             return float("inf")
+        return self.number_of_turns * self.mlt / (self.wire.sigma * area)
 
-        # Longueur totale du fil = (Nombre de tours) x (Longueur moyenne d'un tour)
-        total_length = self.number_of_turns * self.mlt
-
-        # Formule universelle : R = L / (sigma * Surface)
-        return total_length / (self.wire.sigma * area)
-
-    def dowell_area_ratio(self) -> float:
-        """Doit valoir 1.0 : coherence entre la porosite et la vraie
-        section de cuivre. Toute derive signale une erreur de definition."""
-        implied_area = self.bw * self.effective_height() * self.porosity()
-        true_area = self.number_of_turns * self.copper_area()
-
-        if true_area == 0.0:
-            return 1.0
-
-        return implied_area / true_area
-
-    def expand(self) -> list["Layer"]:
+    def expand(self) -> list[Layer]:
         """Litz -> sqrt(k) sous-couches de brins (Geng eq. 3).
         Les autres types se renvoient eux-memes."""
-        if self.wire.wire_type != WIRE_TYPE.LITZ:
+        if self.wire.wire_type is not WIRE_TYPE.LITZ:
             return [self]
 
         k = self.wire.number_of_strands
         n_sub = max(1, round(sqrt(k)))
-        strands_per_sub = k / n_sub
         strand = Wire(
             wire_type=WIRE_TYPE.ROUND,
             diameter=self.wire.diameter,
@@ -252,7 +237,7 @@ class Layer(BaseModel):
         return [
             Layer(
                 name=f"{self.name}[{j + 1}/{n_sub}]",
-                number_of_turns=self.number_of_turns * strands_per_sub,
+                number_of_turns=self.number_of_turns * k / n_sub,
                 bw=self.bw,
                 mlt=self.mlt,
                 wire=strand,
@@ -264,37 +249,62 @@ class Layer(BaseModel):
         ]
 
 
+def _dowell_G(delta: float) -> tuple[float, float]:
+    """Les deux fonctions de Dowell : g1 pour la peau, g2 pour la proximite."""
+    if delta < 1e-3:
+        return 1.0, 0.5  # limite DC
+    if delta > 50.0:
+        return delta, 0.0  # asymptote, evite l'overflow des cosh
+    den = np.cosh(2 * delta) - np.cos(2 * delta)
+    g1 = delta * (np.sinh(2 * delta) + np.sin(2 * delta)) / den
+    g2 = delta * (np.sinh(delta) * np.cos(delta) + np.cosh(delta) * np.sin(delta)) / den
+    return g1, g2
+
+
+# ============================================================================ #
+#  Bobinage
+# ============================================================================ #
+
+
 class Dowell_Winding_Structure(BaseModel):
     list_of_layers: list[Layer] = Field(default_factory=list)
+
     outer_mmf_fraction: float = 0.0
-    """Fraction de la MMF totale absorbée par le chemin de retour EXTÉRIEUR.
+    """Part de la MMF absorbee par le chemin de retour EXTERIEUR.
 
-    0.0 : toute la MMF côté noyau intérieur (entrefer jambe centrale,
-          tore, noyau poudre) -> H = 0 sur la face externe. Cas normal.
-    1.0 : toute la MMF côté extérieur -> H = 0 sur la face interne.
-    0.5 : entrefer réparti également (E-core entrefer é sur 3 jambes).
+    0.0 : entrefer cote noyau interieur (jambe centrale, tore) -> H = 0 sur la
+          face externe. Cas normal.
+    1.0 : tout cote exterieur -> H = 0 sur la face interne.
+    0.5 : entrefer reparti sur les 3 jambes d'un E-core.
 
-    Sans effet si Sigma n.I = 0 : les deux faces sont alors nulles.
+    Sans effet si Sigma n.i = 0 (vrai transformateur) : les deux faces sont
+    alors nulles. Decisif sur une inductance ou un flyback.
     """
 
-    def add_layer(self, layer: Layer):
-        """Les couches DOIVENT etre ajoutees de l'interieur vers l'exterieur
-        (celle contre le noyau en premier). field_profile() et
-        outer_mmf_fraction dependent de cet ordre."""
+    def add_layer(self, layer: Layer) -> None:
+        """Ajouter DE L'INTERIEUR VERS L'EXTERIEUR : celle contre le noyau en
+        premier. field_profile() depend de cet ordre."""
         self.list_of_layers.append(layer)
 
     def effective_layers(self) -> list[Layer]:
+        """Les couches vues par le modele, Litz eclate en sous-couches."""
         return [sub for lay in self.list_of_layers for sub in lay.expand()]
 
-    def field_profile(self, currents) -> list[float]:
-        """MMF aux frontieres de couche, de l'interieur vers l'exterieur.
+    def windings(self) -> list[WINDING_TYPE]:
+        """Les enroulements presents, dans l'ordre de bobinage (pas un set :
+        l'ordre doit etre stable d'une execution a l'autre)."""
+        return list(dict.fromkeys(lay.winding_type for lay in self.list_of_layers))
+
+    # ---------------------------------------------------------------- champ --
+
+    def field_profile(self, currents: dict) -> list[complex]:
+        """MMF [A/m] aux frontieres de couche, de l'interieur vers l'exterieur.
 
         `currents` accepte des reels (un point de fonctionnement) ou des
-        PHASEURS COMPLEXES (un rang harmonique). Rien a changer ici : le
-        profil n'est qu'une somme ponderee des courants, donc il porte
-        l'angle de chacun sans le savoir."""
-        boundaries = [0.0]
-        ampere_turns = 0.0
+        phaseurs complexes (un rang harmonique) : le profil n'est qu'une somme
+        ponderee, il porte l'angle de chacun sans rien avoir a changer."""
+        boundaries: list[complex] = [0.0]
+        ampere_turns: complex = 0.0
         for layer in self.effective_layers():
             ampere_turns += (
                 layer.number_of_turns
@@ -306,23 +316,9 @@ class Dowell_Winding_Structure(BaseModel):
         shift = (1.0 - self.outer_mmf_fraction) * boundaries[-1]
         return [h - shift for h in boundaries]
 
-    def _dowell_G(self, delta: float) -> tuple[float, float]:
-        if delta < 1e-3:
-            return 1.0, 0.5
-        if delta > 50.0:  # asymptotic, avoids overflow
-            return delta, 0.0
-        den = np.cosh(2 * delta) - np.cos(2 * delta)
-        g1 = delta * (np.sinh(2 * delta) + np.sin(2 * delta)) / den
-        g2 = (
-            delta
-            * (np.sinh(delta) * np.cos(delta) + np.cosh(delta) * np.sin(delta))
-            / den
-        )
-        return g1, g2
-
-    def net_ampere_turns(self, currents: dict[WINDING_TYPE, float]) -> float:
-        """Somme signee des ampere-tours. Doit valoir ~0 pour un vrai
-        transformateur, non nul pour une inductance couplee (flyback)."""
+    def net_ampere_turns(self, currents: dict) -> complex:
+        """Somme signee des ampere-tours. ~0 pour un vrai transformateur,
+        non nul pour une inductance ou un flyback."""
         return sum(
             layer.number_of_turns
             * currents.get(layer.winding_type, 0.0)
@@ -330,28 +326,26 @@ class Dowell_Winding_Structure(BaseModel):
             for layer in self.list_of_layers
         )
 
-    def layer_losses(self, freq, currents) -> list[float]:
-        """Perte de chaque couche en W. Meme physique que loss_at_frequency.
+    # --------------------------------------------------------------- pertes --
 
-        `currents` reels ou COMPLEXES : voir field_profile()."""
+    def layer_losses(self, freq: float, currents: dict) -> list[float]:
+        """Perte [W] de chaque couche effective, a une frequence.
+
+        Forme hermitienne : sur des courants reels elle redonne la formule
+        classique, sur des phaseurs elle garde l'angle. Deux MMF en opposition
+        se compensent, deux MMF en quadrature ne se compensent pas.
+        Prendre le module a la place detruirait cette information."""
         H = self.field_profile(currents)
 
         losses = []
         for i, layer in enumerate(self.effective_layers()):
-            assert abs(layer.dowell_area_ratio() - 1.0) < 1e-9, layer.name
-            H_in, H_out = H[i], H[i + 1]
+            H_in, H_out = complex(H[i]), complex(H[i + 1])
             h_eff, eta = layer.effective_height(), layer.porosity()
             if (H_in == 0.0 and H_out == 0.0) or h_eff == 0.0 or eta == 0.0:
                 losses.append(0.0)
                 continue
-            g1, g2 = self._dowell_G(layer.delta(freq))
-            # Forme HERMITIENNE de Dowell. Sur des H reels elle redonne
-            # exactement (H_out^2 + H_in^2).g1 - 4.H_out.H_in.g2, au bit pres.
-            # Sur des phaseurs, le terme croise devient la partie reelle du
-            # produit hermitien : deux MMF en quadrature ne se compensent pas,
-            # deux MMF en opposition se compensent completement. C'est ce que
-            # abs() detruisait, et le flyback est justement pres de la
-            # quadrature a ses premiers rangs.
+
+            g1, g2 = _dowell_G(layer.delta(freq))
             bracket = (abs(H_out) ** 2 + abs(H_in) ** 2) * g1 - 4.0 * (
                 H_out * H_in.conjugate()
             ).real * g2
@@ -360,8 +354,8 @@ class Dowell_Winding_Structure(BaseModel):
             )
         return losses
 
-    def losses_by_layer(self, freq, currents) -> list[float]:
-        """Pertes regroupees sur les couches d'origine (pas les sous-couches)."""
+    def losses_by_layer(self, freq: float, currents: dict) -> list[float]:
+        """Pertes regroupees sur les couches d'origine (Litz recolle)."""
         flat = self.layer_losses(freq, currents)
         out, i = [], 0
         for lay in self.list_of_layers:
@@ -370,406 +364,118 @@ class Dowell_Winding_Structure(BaseModel):
             i += n
         return out
 
-    def loss_at_frequency(self, freq, currents) -> float:
-        return sum(self.layer_losses(freq, currents))
+    def losses_by_winding(self, freq: float, currents: dict) -> dict:
+        """Pertes par enroulement.
 
-    def windings(self) -> list[WINDING_TYPE]:
-        """Les enroulements presents, dans l'ordre de bobinage.
-        Un set() rendrait l'ordre arbitraire : une couleur de courbe qui
-        change d'une execution a l'autre n'est pas un codage."""
-        return list(dict.fromkeys(lay.winding_type for lay in self.list_of_layers))
-
-    def losses_by_winding(self, freq, currents) -> dict[WINDING_TYPE, float]:
-        """Pertes regroupees par enroulement.
-
-        La perte d'un enroulement contient TOUT ce que dissipent ses couches,
-        y compris la proximite que le champ de l'autre lui impose : un
-        enroulement qui ne conduit pas peut donc etre au-dessus de zero."""
+        Contient TOUT ce que dissipent ses couches, y compris la proximite que
+        le champ de l'autre lui impose : un enroulement qui ne conduit pas peut
+        etre au-dessus de zero."""
         totals = dict.fromkeys(self.windings(), 0.0)
         for lay, loss in zip(self.list_of_layers, self.losses_by_layer(freq, currents)):
             totals[lay.winding_type] += loss
         return totals
 
-    def dc_loss(self, currents_rms: dict[WINDING_TYPE, float]) -> float:
+    def loss_at_frequency(self, freq: float, currents: dict) -> float:
+        """Perte totale [W] si tout le courant donne se trouvait a `freq`.
+        Outil de lecture : pour un chiffre, passer par harmonic_losses()."""
+        return sum(self.layer_losses(freq, currents))
+
+    def dc_loss(self, currents_rms: dict) -> float:
+        """Pertes Joule pures, sans effet de peau ni de proximite."""
         return sum(
             layer.dc_resistance() * (currents_rms.get(layer.winding_type, 0.0) ** 2)
             for layer in self.list_of_layers
         )
 
-    def dc_resistances(self) -> dict[WINDING_TYPE, float]:
-        """
-        Calcule la résistance DC totale propre à chaque enroulement.
-        Cette valeur est une constante purement géométrique.
-        """
-        resistances = {}
+    # ---------------------------------------------------------- resistances --
+
+    def dc_resistances(self) -> dict:
+        """R_dc par enroulement [Ohm]. Constante purement geometrique."""
+        out: dict = {}
         for lay in self.list_of_layers:
-            w_type = lay.winding_type
-            # On additionne la résistance de la couche à son enroulement
-            resistances[w_type] = resistances.get(w_type, 0.0) + lay.dc_resistance()
+            out[lay.winding_type] = out.get(lay.winding_type, 0.0) + lay.dc_resistance()
+        return out
 
-        return resistances
+    def ac_resistances(self, freq: float, currents: dict | None = None) -> dict:
+        """R_ac par enroulement [Ohm]. Deux conventions, parce qu'une
+        resistance AC n'a pas de sens hors du courant qui la traverse.
 
-    def ac_resistances(
-        self,
-        freq: float,
-        currents: dict[WINDING_TYPE, float] | None = None,
-    ) -> dict[WINDING_TYPE, float]:
-        """
-        Résistance AC de chaque enroulement à une fréquence donnée.
+        currents = None : chaque enroulement excite seul sous 1 A, les autres
+            ouverts. Resistance PROPRE, celle que lit un pont LCR.
 
-        DEUX conventions, parce qu'une résistance AC n'a pas de sens hors du
-        courant qui la traverse : la perte de Dowell est une forme QUADRATIQUE
-        des courants, donc elle contient des termes croisés entre enroulements.
-
-        currents = None : chaque enroulement est excité seul, 1 A RMS, les
-            autres à 0 (la perte en watts vaut alors numériquement la
-            résistance en ohms). C'est la résistance PROPRE : ce que mesure un
-            pont LCR les autres enroulements en l'air, et ce que voit
-            réellement un flyback, où un seul enroulement conduit à la fois.
-
-        currents = {...} : la résistance EFFECTIVE à ce point de
-            fonctionnement, R_i = P_i / I_i², tous les champs présents. C'est
-            la seule correcte dès que les enroulements conduisent ENSEMBLE
-            (forward, push-pull, LLC...) : leurs MMF opposées se compensent en
-            partie, et la résistance propre surestime alors la perte. La
-            somme des R_i·I_i² redonne exactement la perte totale.
-
-            Un enroulement qui ne porte pas de courant renvoie nan : sa perte
-            est bien réelle (proximité pure) mais elle n'est proportionnelle à
-            aucun courant qu'il transporte -> lire losses_by_winding().
-
-        Le flyback est le cas où les deux conventions coïncident, la perte
-        étant homogène de degré 2 : P(alpha.e_i) = alpha².P(e_i). Il se traite
-        en découpant les phases à l'extérieur, un appel par phase.
+        currents = {...} : resistance EFFECTIVE au point de fonctionnement,
+            R = P / I^2, tous les champs presents. Obligatoire des que deux
+            enroulements conduisent ensemble, et seule version qui voit
+            l'entrelacement. Un enroulement sans courant renvoie nan : sa perte
+            existe mais aucun courant a lui ne l'explique -> losses_by_winding().
         """
         if currents is None:
-            # Un seul enroulement excité à la fois : la perte de SES couches
-            # sous 1 A est sa résistance propre.
             return {
-                w_type: self.losses_by_winding(freq, {w_type: 1.0})[w_type]
-                for w_type in self.windings()
+                w: self.losses_by_winding(freq, {w: 1.0})[w] for w in self.windings()
             }
 
         losses = self.losses_by_winding(freq, currents)
         return {
-            w_type: (
-                losses[w_type] / current**2
-                if (current := currents.get(w_type, 0.0))
-                else float("nan")
-            )
-            for w_type in self.windings()
+            w: (losses[w] / i**2 if (i := currents.get(w, 0.0)) else float("nan"))
+            for w in self.windings()
         }
+
+    # ------------------------------------------------------------ reference --
 
     def harmonic_losses(
         self,
-        signals: dict[WINDING_TYPE, "ElectronicPeriodicSignal"],
+        signals: dict,
         n_max: int = 40,
         threshold: float = 0.0,
     ) -> dict[str, float]:
-        """
-        Pertes totales par superposition harmonique, PHASE COMPRISE.
+        """LA methode de calcul des pertes. Superposition harmonique, phases
+        conservees.
 
-        Exploite le fait que tous les enroulements d'un convertisseur
-        partagent la même fréquence fondamentale (f_sw).
+        Exact au sens du modele de Dowell, pour n'importe quelle forme d'onde
+        et n'importe quelle topologie : le milieu est lineaire et deux rangs
+        differents sont orthogonaux sur la periode, donc leurs pertes
+        s'additionnent sans terme croise. Seule approximation : la troncature
+        a n_max.
 
-        Le résultat est EXACT au sens du modèle de Dowell, pour n'importe
-        quelle forme d'onde et n'importe quelle topologie : le milieu est
-        linéaire et deux harmoniques de rangs différents sont orthogonales sur
-        la période, donc leurs pertes s'additionnent sans terme croisé. La
-        seule approximation restante est la troncature à n_max.
+        PASSER TOUS LES ENROULEMENTS DANS UN SEUL APPEL, y compris quand ils
+        ne conduisent jamais en meme temps (flyback). Le fait qu'ils soient
+        disjoints dans le temps est deja code dans l'angle des phaseurs.
+        Sommer un appel par phase jette le terme croise entre les deux, et
+        sous-estime la perte.
 
-        PASSER TOUS LES ENROULEMENTS ENSEMBLE, en un seul appel. Découper un
-        flyback en ses deux phases et sommer les deux appels est une erreur de
-        -19 % sur l'exemple du bas de ce fichier : le split traite la
-        transition d'une phase à l'autre comme si le champ y retournait à
-        zéro, alors que la face interne du primaire y passe de -641 à
-        +360 A/m d'un bloc. La diffusion dans le cuivre a de la mémoire, et
-        c'est cette excursion-là qui coûte.
+        Le decoupage par phase reste la bonne facon de DESSINER : un profil de
+        MMF est celui d'un instant (voir dowell_plot.py).
 
-        Le découpage par phase garde en revanche tout son sens pour DESSINER :
-        un profil de MMF est celui d'un instant, il y en a bien un par phase
-        (voir SRC/MAGNETIC/dowell_plot.py).
+        Tous les signaux doivent partager la meme origine des temps et la meme
+        periode. C'est relatif : un decalage entre deux signaux devient un
+        dephasage, et rien ne le signalerait ensuite.
         """
         if not signals:
             return {"P_dc": 0.0, "P_ac": 0.0, "P_total": 0.0}
 
-        # 1. On récupère la fréquence fondamentale (f_sw) partagée par tous
-        first_signal = next(iter(signals.values()))
-        f0 = first_signal.fundamental()
+        fundamentals = {w: sig.fundamental() for w, sig in signals.items()}
+        f0 = next(iter(fundamentals.values()))
+        for w, f in fundamentals.items():
+            if abs(f / f0 - 1.0) > 1e-9:
+                raise ValueError(
+                    f"'{w.value}' a f0 = {f:.6g} Hz au lieu de {f0:.6g} Hz : "
+                    f"les signaux doivent partager la meme periode et la meme "
+                    f"origine des temps, sinon leur dephasage est faux"
+                )
 
-        # 2. On extrait le spectre complet de chaque signal
-        spectra = {
-            w_type: sig.harmonics_rms(n_max, threshold)
-            for w_type, sig in signals.items()
-        }
+        spectra = {w: sig.harmonics_rms(n_max, threshold) for w, sig in signals.items()}
 
-        total_dc_loss = 0.0
-        total_ac_loss = 0.0
-
-        # 3. Parcours harmonique par harmonique (de 0 à n_max)
+        p_dc = 0.0
+        p_ac = 0.0
         for rank in range(n_max + 1):
-            # PHASEURS COMPLEXES, pas des modules : l'angle relatif entre
-            # enroulements décide si leurs MMF se compensent ou s'ajoutent, et
-            # il n'est 180° que sur les topologies où les courants sont
-            # homothétiques (forward, push-pull). Sur un LLC ou un DAB il vaut
-            # ce que la commande en a fait.
-            currents_rank = {
-                w_type: spectrum.get(rank, 0j)
-                for w_type, spectrum in spectra.items()
-            }
-
-            # S'il n'y a aucune énergie significative sur ce rang pour
-            # aucun des enroulements, on économise du temps de calcul
-            if all(i == 0.0 for i in currents_rank.values()):
+            currents = {w: spectrum.get(rank, 0j) for w, spectrum in spectra.items()}
+            if all(i == 0.0 for i in currents.values()):
                 continue
 
             if rank == 0:
-                # Rang 0 : composante continue (0 Hz) -> pertes Joule DC.
-                # Aucun courant de Foucault à 0 Hz, donc aucune phase à
-                # conserver : harmonics_rms() rend d'ailleurs ce rang réel.
-                total_dc_loss += self.dc_loss(
-                    {w_type: abs(c) for w_type, c in currents_rank.items()}
-                )
+                # 0 Hz : pas de courant de Foucault, donc pas de phase a garder.
+                p_dc += self.dc_loss({w: abs(c) for w, c in currents.items()})
             else:
-                # Rang n : effet de peau et de proximité AC
-                total_ac_loss += self.loss_at_frequency(rank * f0, currents_rank)
+                p_ac += self.loss_at_frequency(rank * f0, currents)
 
-        return {
-            "P_dc": total_dc_loss,
-            "P_ac": total_ac_loss,
-            "P_total": total_dc_loss + total_ac_loss,
-        }
-
-
-if __name__ == "__main__":
-    OUTPUT = Path(__file__).parent.parent.parent / "OUTPUT"
-
-    # One name for both palettes: SRC/OTHERS/plot.py and SRC/OTHERS/terminal.py
-    # carry the same theme names on purpose, so the report and the figures match.
-    TERM_THEME = "light"
-    PLOT_THEME = "light"
-
-    freq_sw = 100e3
-    bw_total = pi * 7.62e-3
-    mlt = 17.5e-3
-
-    # --- Le signal reel : flyback 100 kHz --------------------------------
-    T = 10.0e-6  # periode
-    t_on = 6.30e-6  # primaire conduit   : rampe 0 -> 500 mA
-    t_dem = 1.98e-6  # secondaire conduit : rampe 2.52 A -> 0
-    t_off = T - t_on - t_dem  # 1.72 us : les deux a zero
-
-    i_pri = ElectronicPeriodicSignal.from_breakpoints(
-        "I_primaire",
-        times=[0.0, t_on, t_on, T],
-        values=[0.0, 0.5, 0.0, 0.0],
-        n_samples=8192,
-        period=T,
-    )
-    i_sec = ElectronicPeriodicSignal.from_breakpoints(
-        "I_secondaire",
-        times=[0.0, t_on, t_on, t_on + t_dem, T],
-        values=[0.0, 0.0, 2.52, 0.0, 0.0],
-        n_samples=8192,
-        period=T,
-    )
-    signals = {WINDING_TYPE.PRIMARY: i_pri, WINDING_TYPE.SECONDARY: i_sec}
-
-    fig = plot_time_domain(
-        [i_pri, i_sec], title="Courants du flyback", unit="A", theme=PLOT_THEME
-    )
-
-    fig2 = plot_spectrum(
-        [i_pri, i_sec], title="Spectre du flyback", unit="A", theme=PLOT_THEME
-    )
-    save_figure(fig, OUTPUT / "dowell_flyback_currents.png", dpi=300)
-    save_figure(fig2, OUTPUT / "dowell_flyback_currents_spectrum.pdf", dpi=300)
-
-    dataframe(signal_table(i_pri))
-    dataframe(signal_table(i_sec))
-
-    # Chaque enroulement ne conduit que pendant sa phase : sa RMS sur la
-    # periode entiere est donc deja la contribution ponderee par le rapport
-    # cyclique. Les pertes des deux phases s'additionnent directement.
-    phases = {
-        "ON  (primaire conduit)": {
-            WINDING_TYPE.PRIMARY: i_pri.rms(),
-            WINDING_TYPE.SECONDARY: 0.0,
-        },
-        "OFF (secondaire conduit)": {
-            WINDING_TYPE.PRIMARY: 0.0,
-            WINDING_TYPE.SECONDARY: i_sec.rms(),
-        },
-    }
-
-    flyback_transfo = Dowell_Winding_Structure()
-    flyback_transfo.add_layer(
-        Layer(
-            name="Primaire",
-            number_of_turns=67,
-            bw=bw_total,
-            mlt=mlt,
-            wire=Wire(wire_type=WIRE_TYPE.ROUND, diameter=0.3e-3),
-            winding_type=WINDING_TYPE.PRIMARY,
-            polarity=POLARITY.POSITIVE,
-        )
-    )
-    flyback_transfo.add_layer(
-        Layer(
-            name="Secondaire",
-            number_of_turns=26,
-            bw=bw_total,
-            mlt=mlt + 8 * 0.3e-3,  # bobine par-dessus le primaire
-            wire=Wire(wire_type=WIRE_TYPE.ROUND, diameter=0.4e-3),
-            winding_type=WINDING_TYPE.SECONDARY,
-            polarity=POLARITY.NEGATIVE,
-        )
-    )
-
-    layers = flyback_transfo.list_of_layers
-
-    # --- Géométrie (sur les sous-couches vues par Dowell) ---
-    print("=== GÉOMÉTRIE DES COUCHES ===")
-    print(
-        f"{'Couche':<16}{'d [mm]':>9}{'h_eff [µm]':>12}{'eta':>8}"
-        f"{'delta_pk [µm]':>15}{'Delta':>8}"
-    )
-    for lay in flyback_transfo.effective_layers():
-        eta = lay.porosity()
-        print(
-            f"{lay.name:<16}{lay.wire.diameter * 1e3:>9.2f}"
-            f"{lay.effective_height() * 1e6:>12.1f}{eta:>8.3f}"
-            f"{skin_depth(freq_sw, lay.wire.sigma, eta) * 1e6:>15.1f}"
-            f"{lay.delta(freq_sw):>8.3f}"
-        )
-    print(f"\nÉpaisseur de peau nue (eta=1) : {skin_depth(freq_sw) * 1e6:.1f} µm\n")
-
-    # --- Bilan par phase ---
-    p_dc_total = 0.0
-    p_ac_total = 0.0
-    print("=== PERTES PAR PHASE ET PAR COUCHE ===")
-    for phase_name, currents in phases.items():
-        losses = flyback_transfo.losses_by_layer(freq_sw, currents)
-        assert len(losses) == len(layers)
-        H = flyback_transfo.field_profile(currents)
-        print(f"\n--- Phase {phase_name} ---")
-        print(f"  MMF aux frontières : {[f'{h:.0f}' for h in H]} A/m")
-        for lay, p_ac in zip(layers, losses):
-            i_rms = currents.get(lay.winding_type, 0.0)
-            p_dc = lay.dc_resistance() * i_rms**2
-            p_dc_total += p_dc
-            p_ac_total += p_ac
-            if i_rms > 0.0:
-                fr = p_ac / p_dc if p_dc > 0 else 1.0
-                note = f"Fr = {fr:6.3f}"
-            else:
-                note = "PASSIVE (proximité seule)" if p_ac > 0 else "PASSIVE (blindée)"
-            print(
-                f"  {lay.name:<12} P_dc = {p_dc * 1e3:6.2f} mW   "
-                f"P_ac = {p_ac * 1e3:6.2f} mW   {note}"
-            )
-
-    # --- Synthèse ---
-    fr_global = p_ac_total / p_dc_total if p_dc_total > 0 else 1.0
-    print("\n=== SYNTHÈSE ===")
-    print(f"  Pertes DC totales     : {p_dc_total * 1e3:6.2f} mW")
-    print(f"  Pertes AC totales     : {p_ac_total * 1e3:6.2f} mW")
-    print(f"  Facteur Dowell global : {fr_global:6.3f}")
-    print(f"  Surcoût AC            : {(p_ac_total - p_dc_total) * 1e3:6.2f} mW")
-
-    # --- Contrôles de cohérence ---
-    p_dc_check = sum(flyback_transfo.dc_loss(c) for c in phases.values())
-    assert abs(p_dc_check - p_dc_total) < 1e-12, "incohérence DC"
-    p_zero_f = sum(flyback_transfo.loss_at_frequency(1e-6, c) for c in phases.values())
-    assert abs(p_zero_f - p_dc_total) / p_dc_total < 1e-6, (
-        f"Dowell ne converge pas vers le DC : {p_zero_f * 1e3:.2f} vs {p_dc_total * 1e3:.2f} mW"
-    )
-    print("\n  [OK] Dowell converge vers les pertes DC quand f -> 0")
-
-    # =====================================================================
-    #  SANS DECOMPOSITION HARMONIQUE  vs  AVEC
-    # =====================================================================
-    # Methode 1 (ci-dessus) : une seule frequence, f_sw, alimentee par la
-    #   RMS de chaque enroulement -> p_ac_total.
-    # Methode 2 : le meme signal eclate en son spectre, chaque rang evalue
-    #   a sa propre frequence puis somme.
-    N_MAX = 200  # rang harmonique max (20 MHz a f0 = 100 kHz)
-    f0 = i_pri.fundamental()
-    harm = flyback_transfo.harmonic_losses(signals, n_max=N_MAX)
-
-    print("\n" + "=" * 72)
-    print("PERTES SANS vs AVEC DECOMPOSITION HARMONIQUE")
-    print("=" * 72)
-    print(
-        f"  T = {T * 1e6:.2f} us   t_on = {t_on * 1e6:.2f} us   "
-        f"t_dem = {t_dem * 1e6:.2f} us   t_off = {t_off * 1e6:.2f} us   "
-        f"f0 = {f0 / 1e3:.1f} kHz\n"
-    )
-    for sig in (i_pri, i_sec):
-        nfo = sig.info()
-        print(
-            f"  {nfo.name:<14} I_rms = {nfo.rms * 1e3:7.1f} mA   "
-            f"I_pk = {nfo.peak * 1e3:7.1f} mA   "
-            f"H1_rms = {nfo.fundamental_rms * 1e3:6.1f} mA   "
-            f"THD = {nfo.thd * 100:5.1f} %"
-        )
-
-    # --- Ou passe l'energie, rang par rang -------------------------------
-    spectra = {w: s.harmonics_rms(N_MAX) for w, s in signals.items()}
-    print(
-        f"\n  {'rang':>5}{'f [kHz]':>10}{'I_pri [mA]':>13}{'I_sec [mA]':>13}"
-        f"{'P [mW]':>11}{'cumul [%]':>11}"
-    )
-    cumul = 0.0
-    for rank in range(N_MAX + 1):
-        currents = {w: abs(sp.get(rank, 0j)) for w, sp in spectra.items()}
-        if all(i == 0.0 for i in currents.values()):
-            continue
-        cumul += (
-            flyback_transfo.dc_loss(currents)
-            if rank == 0
-            else flyback_transfo.loss_at_frequency(rank * f0, currents)
-        )
-        if rank > 10 and rank % 20:  # au-dela du rang 10, un point sur 20
-            continue
-        print(
-            f"  {rank:>5}{rank * f0 / 1e3:>10.0f}"
-            f"{currents[WINDING_TYPE.PRIMARY] * 1e3:>13.1f}"
-            f"{currents[WINDING_TYPE.SECONDARY] * 1e3:>13.1f}"
-            f"{cumul * 1e3:>11.2f}{100 * cumul / harm['P_total']:>11.1f}"
-        )
-
-    # --- Verdict ----------------------------------------------------------
-    print("\n  --- COMPARAISON ---")
-    print(f"  Sans harmoniques (f_sw seule) : {p_ac_total * 1e3:6.2f} mW")
-    print(f"  Avec harmoniques (n <= {N_MAX})   : {harm['P_total'] * 1e3:6.2f} mW")
-    print(
-        f"  Surcout des harmoniques       : "
-        f"{(harm['P_total'] - p_ac_total) * 1e3:+6.2f} mW  "
-        f"({100 * (harm['P_total'] / p_ac_total - 1.0):+.1f} %)"
-    )
-
-    # --- Convergence : jusqu'ou faut-il monter en rang ? -------------------
-    # Fronts ideaux => spectre en 1/n et pertes par rang en n^-1.5 : la somme
-    # converge, mais lentement. Le vrai signal a un di/dt fini qui coupe la
-    # queue du spectre ; sans cette information, la somme reste une borne
-    # inferieure. L'erreur de Parseval dit ce que la troncature a laisse.
-    print("\n  --- CONVERGENCE ---")
-    print(f"  {'n_max':>7}{'P_total [mW]':>15}{'ecart/prec [%]':>16}{'Parseval':>12}")
-    prev = None
-    for n in (20, 40, 60, 100, 200, 400):
-        p_n = flyback_transfo.harmonic_losses(signals, n_max=n)["P_total"]
-        drift = f"{100 * (p_n / prev - 1.0):>15.1f}" if prev else f"{'-':>15}"
-        print(f"  {n:>7}{p_n * 1e3:>15.2f}{drift} {i_sec.parseval_error(n):>11.2e}")
-        prev = p_n
-
-    # NB : harmonic_losses() garde les phaseurs complexes, donc le nombre
-    # ci-dessus est celui des deux enroulements PRIS ENSEMBLE, avec leur
-    # dephasage reel. Ne pas le comparer a une somme d'appels par phase :
-    # celle-ci vaut 45.9 mW contre 56.6 mW ici, parce qu'elle traite le
-    # passage ON -> OFF comme si le champ y retournait a zero alors que la
-    # face interne du primaire y bascule de -641 a +360 A/m.
-    #
-    # Les pertes par phase calculees plus haut (p_ac_total) restent, elles,
-    # l'approximation "toute la RMS a f_sw" : utile pour lire une couche a
-    # couche, pas pour un budget thermique.
+        return {"P_dc": p_dc, "P_ac": p_ac, "P_total": p_dc + p_ac}
