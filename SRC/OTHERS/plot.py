@@ -408,7 +408,7 @@ def reference_line(
                      nominal). Solid, in the axis colour, so it recedes.
 
     The label is what keeps a limit distinguishable from a series of the same
-    hue family — see the "red" theme note above. Do not draw the rule without it.
+    hue family
     """
     c = style(theme)
     if kind == "limit":
