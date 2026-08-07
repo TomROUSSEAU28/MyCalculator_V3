@@ -12,7 +12,7 @@ Jupyter cell alike, since rich renders to both.
     table(["Edge", "t [ns]", "Slew rate"], [("t_ri", "11.3", "2.21 A/ns")])
     alert("error", "Voltage above the V_DSS rating — breakdown.")
 
-Colours live in THEMES: one theme is a plain {style name: rich style} dict.
+Colours live in TERM_THEMES: one theme is a plain {style name: rich style} dict.
 Add an entry there, call use_theme("your-name") once at the top of your
 script, and every helper below follows — nothing else to change.
 """
@@ -31,7 +31,7 @@ from rich.text import Text
 from rich.theme import Theme
 
 __all__ = [
-    "THEMES",
+    "TERM_THEMES",
     "active_theme",
     "alert",
     "blank",
@@ -50,7 +50,7 @@ INDENT = 4  # left margin of everything but the section rules
 LABEL_WIDTH = 50  # width of the label column of kv()
 
 
-THEMES: dict[str, dict[str, str]] = {
+TERM_THEMES: dict[str, dict[str, str]] = {
     # Inspiré par Tailwind CSS (Gris ardoise profond) : très lisible et doux pour les yeux.
     "light": {
         "report.title": "bold #111827",
@@ -178,7 +178,7 @@ DEFAULT_THEME = "dark"
 # from colouring numbers on its own: in a report every value is already placed
 # by hand, and a second, uninvited colour code would only compete with it.
 console = Console(
-    theme=Theme(THEMES[DEFAULT_THEME]),
+    theme=Theme(TERM_THEMES[DEFAULT_THEME]),
     width=WIDTH,
     highlight=False,
     color_system="truecolor",
@@ -197,9 +197,11 @@ def use_theme(name: str) -> None:
     never replaced, so modules that imported it earlier keep working.
     """
     global _active_theme
-    if name not in THEMES:
-        raise ValueError(f"unknown theme {name!r} (available: {', '.join(THEMES)})")
-    console.push_theme(Theme(THEMES[name]))
+    if name not in TERM_THEMES:
+        raise ValueError(
+            f"unknown theme {name!r} (available: {', '.join(TERM_THEMES)})"
+        )
+    console.push_theme(Theme(TERM_THEMES[name]))
     _active_theme = name
 
 

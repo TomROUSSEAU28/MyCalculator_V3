@@ -12,11 +12,11 @@ the same split as SRC/OTHERS/terminal.py, which does this for the report side.
     add_title(ax, "dark", "Loss breakdown", "total 4.81 W")
     save_figure(fig, OUTPUT / "losses")
 
-Colours live in THEMES (chrome) and SERIES (the categorical slots). The theme
-names match those of SRC/OTHERS/terminal.py, so a report and its figures can be
-set to the same one and look like they belong together.
+Colours live in PLOT_THEMES (chrome) and PLOT_SERIES (the categorical slots).
+The theme names match those of SRC/OTHERS/terminal.py, so a report and its
+figures can be set to the same one and look like they belong together.
 
-Adding a theme is NOT a matter of taste — see the note above SERIES.
+Adding a theme is NOT a matter of taste — see the note above PLOT_SERIES.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ from matplotlib.ticker import EngFormatter
 
 __all__ = [
     "FONT",
-    "SERIES",
-    "THEMES",
+    "PLOT_SERIES",
+    "PLOT_THEMES",
     "add_title",
     "annotate",
     "axis_labels",
@@ -55,45 +55,16 @@ __all__ = [
 ]
 
 
-# ============================================================================ #
-#  Themes
-# ============================================================================ #
-
-# Validated categorical slots. The ORDER is the colour-blind-safety mechanism,
-# not decoration — adjacent pairs are the ones a stacked bar puts side by side,
-# and this order is what clears the separation gates. Do not reorder to taste.
-#
-# The three accent themes ("red", "blue", "vivid") draw the SAME hue steps as
-# "dark" — only the order changes, so slot 1, the colour most figures actually
-# plot, sets the mood. Each order was picked by enumerating the permutations
-# and keeping only those clearing every gate against that theme's own surface;
-# the worst adjacent pair lands at CVD ΔE 13.0-13.2 (target 8) and normal-vision
-# ΔE 19.3 (floor 15). Re-run the enumeration if you change a step.
-#
-# Two limits a new plotting module has to know:
-#   - six slots is the cap for bars/lines/stacks, where only neighbours touch.
-#     For a scatter or a map ANY two marks can sit side by side, and six of
-#     these cannot be told apart pairwise (worst pair CVD ΔE 1.9). Past three
-#     series there, fold the rest into "Other" or facet — do not add hues.
-#   - three of the light-mode slots sit below 3:1 against their surface, so the
-#     palette may only carry meaning next to visible labels or a table.
-SERIES: dict[str, list[str]] = {
+PLOT_SERIES: dict[str, list[str]] = {
     "light": ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"],
     "dark": ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"],
-    "red": ["#e66767", "#9085e9", "#c98500", "#d55181", "#3987e5", "#d95926"],
-    "blue": ["#3987e5", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
-    "vivid": ["#d55181", "#c98500", "#9085e9", "#e66767", "#3987e5", "#d95926"],
+    "paper": ["#2f6f9f", "#c05a2b", "#2f7d63", "#a2801c", "#a75277", "#4b7a2e"],
+    "blueprint": ["#1f5f9c", "#c25a25", "#0f7a6c", "#9a7714", "#7a4fa8", "#a03f5e"],
+    "sage": ["#c0532c", "#3a6ea5", "#2c6a52", "#96771a", "#8a4a76", "#5b6b7a"],
 }
 
-# Chrome. The accent themes tint their near-black surface toward the accent
-# hue; ink and labels are stepped to clear the "dark" theme's contrast (muted
-# text 4.85:1), so nothing gets harder to read in exchange for the mood.
-#
-# `critical` is a status colour, not a series one: it is FIXED across every
-# theme, because a reader has to be able to learn "that red rule is the limit"
-# once and have it hold everywhere. Same rule as the alert colours of
-# SRC/OTHERS/terminal.py. Never spend it on a series.
-THEMES: dict[str, dict[str, str]] = {
+
+PLOT_THEMES: dict[str, dict[str, str]] = {
     "light": {
         "surface": "#fcfcfb",
         "ink": "#0b0b0b",
@@ -112,50 +83,49 @@ THEMES: dict[str, dict[str, str]] = {
         "axis": "#383835",
         "critical": "#d03b3b",
     },
-    "red": {
-        "surface": "#151011",
-        "ink": "#ffffff",
-        "ink_secondary": "#cdc0c0",
-        "muted": "#9a8d8d",
-        "grid": "#2a2021",
-        "axis": "#3a2c2d",
-        "critical": "#d03b3b",
+    "paper": {
+        "surface": "#f7f3ea",
+        "ink": "#14120d",
+        "ink_secondary": "#57534a",
+        "muted": "#8b8578",
+        "grid": "#e5dfd1",
+        "axis": "#cfc7b4",
+        "critical": "#c0392b",
     },
-    "blue": {
-        "surface": "#0e1117",
-        "ink": "#ffffff",
-        "ink_secondary": "#c2cad6",
-        "muted": "#8b95a3",
-        "grid": "#1e2530",
-        "axis": "#2b3440",
-        "critical": "#d03b3b",
+    "blueprint": {
+        "surface": "#eaf1f7",
+        "ink": "#0d2438",
+        "ink_secondary": "#3d566b",
+        "muted": "#7b8fa1",
+        "grid": "#d7e2ea",
+        "axis": "#b6c6d3",
+        "critical": "#c0392b",
     },
-    "vivid": {
-        "surface": "#121014",
-        "ink": "#ffffff",
-        "ink_secondary": "#cec7d6",
-        "muted": "#968ea1",
-        "grid": "#241f2a",
-        "axis": "#332c3b",
-        "critical": "#d03b3b",
+    "sage": {
+        "surface": "#edf0e9",
+        "ink": "#12160f",
+        "ink_secondary": "#4d5449",
+        "muted": "#838a7c",
+        "grid": "#dde2d8",
+        "axis": "#c3cabb",
+        "critical": "#c0392b",
     },
 }
-
 FONT = ["Segoe UI", "DejaVu Sans", "sans-serif"]
 
 
 def style(theme: str) -> dict[str, str]:
     """The chrome of a theme, by role name. Raises on an unknown theme."""
-    if theme not in THEMES:
-        known = ", ".join(repr(name) for name in THEMES)
+    if theme not in PLOT_THEMES:
+        known = ", ".join(repr(name) for name in PLOT_THEMES)
         raise ValueError(f"theme must be one of {known}, got {theme!r}")
-    return THEMES[theme]
+    return PLOT_THEMES[theme]
 
 
 def series(theme: str) -> list[str]:
     """The categorical slots of a theme, in their validated order."""
     style(theme)  # same error for the same mistake, whichever way you ask
-    return SERIES[theme]
+    return PLOT_SERIES[theme]
 
 
 # ============================================================================ #
@@ -400,7 +370,7 @@ def annotate(
     without a legend — and they are the mandatory relief wherever a series
     colour sits below 3:1 on its surface.
 
-    role : key of THEMES ("ink", "ink_secondary", "muted", "critical"...).
+    role : key of PLOT_THEMES ("ink", "ink_secondary", "muted", "critical"...).
            Text wears text colours; it never takes a series colour, or it
            starts competing with the marks for identity.
     """

@@ -465,7 +465,8 @@ if __name__ == "__main__":
 
     # One name for both palettes: SRC/OTHERS/plot.py and SRC/OTHERS/terminal.py
     # carry the same theme names on purpose, so the report and the figures match.
-    THEME = "light"
+    TERM_THEME = "light"
+    PLOT_THEME = "light"
 
     freq_sw = 100e3
     bw_total = pi * 7.62e-3
@@ -494,11 +495,11 @@ if __name__ == "__main__":
     signals = {WINDING_TYPE.PRIMARY: i_pri, WINDING_TYPE.SECONDARY: i_sec}
 
     fig = plot_time_domain(
-        [i_pri, i_sec], title="Courants du flyback", unit="A", theme=THEME
+        [i_pri, i_sec], title="Courants du flyback", unit="A", theme=PLOT_THEME
     )
 
     fig2 = plot_spectrum(
-        [i_pri, i_sec], title="Spectre du flyback", unit="A", theme=THEME
+        [i_pri, i_sec], title="Spectre du flyback", unit="A", theme=PLOT_THEME
     )
     save_figure(fig, OUTPUT / "dowell_flyback_currents.png", dpi=300)
     save_figure(fig2, OUTPUT / "dowell_flyback_currents_spectrum.pdf", dpi=300)
