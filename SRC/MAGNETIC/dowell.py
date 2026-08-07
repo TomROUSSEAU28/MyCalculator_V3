@@ -496,7 +496,12 @@ if __name__ == "__main__":
     fig = plot_time_domain(
         [i_pri, i_sec], title="Courants du flyback", unit="A", theme=THEME
     )
+
+    fig2 = plot_spectrum(
+        [i_pri, i_sec], title="Spectre du flyback", unit="A", theme=THEME
+    )
     save_figure(fig, OUTPUT / "dowell_flyback_currents.png", dpi=300)
+    save_figure(fig2, OUTPUT / "dowell_flyback_currents_spectrum.pdf", dpi=300)
 
     dataframe(signal_table(i_pri))
     dataframe(signal_table(i_sec))
