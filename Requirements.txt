@@ -32,3 +32,6 @@ rich[jupyter]
 rich
 
 ruff
+
+PyQSPICE
+
