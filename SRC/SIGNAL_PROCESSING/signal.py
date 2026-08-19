@@ -118,7 +118,7 @@ class ElectronicPeriodicSignal(BaseModel):
             raise ValueError("Echantillonnage non uniforme : la FFT serait fausse.")
         return self
 
-    def get_numpy_tabs(self) -> (np.ndarray, np.ndarray):
+    def get_numpy_tabs(self) -> tuple[np.ndarray, np.ndarray]:
         return (self.value, self.time)
 
     def sample_period(self) -> float:
