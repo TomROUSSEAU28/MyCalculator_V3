@@ -109,6 +109,8 @@ class BuckDesign(ConverterDesign):
             self._corners(spec.pout),
             self._corners(spec.switching_frequency),
         )
+
+        print([dict(zip(keys, values)) for values in product(*corners)])
         return [dict(zip(keys, values)) for values in product(*corners)]
 
     def _duty_cycle(self, vin: float, vout: float) -> float:
