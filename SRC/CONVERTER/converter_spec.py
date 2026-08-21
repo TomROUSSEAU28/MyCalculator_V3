@@ -1,7 +1,8 @@
 from itertools import product
+from typing import override
 
-from pydantic import BaseModel, model_validator, ConfigDict
 import pandas as pd
+from pydantic import BaseModel, ConfigDict, model_validator
 
 # Règles du pouce utilisées quand les contraintes ne sont pas fournies.
 DEFAULT_CURRENT_RIPPLE_PERCENT = 30.0
@@ -50,16 +51,75 @@ class ConverterSpec(BaseModel):
     def pout_from_vout_iout(vout: float, iout: float) -> float:
         return vout * iout
 
+    def get_spec(self) -> dict[str, float | ValueTolerance]:
+        return self.model_dump()
+
+    def get_keys(self) -> tuple[str, ...]:
+        return tuple(type(self).model_fields.keys())
+
+    def get_values(self) -> tuple[float | ValueTolerance, ...]:
+        return tuple(getattr(self, k) for k in type(self).model_fields.keys())
+
 
 class ConverterConstraints(BaseModel):
-    pass
+    def get_constraints(self) -> dict[str, float | ValueConstraints | bool]:
+        return self.model_dump()
+
+    def get_keys(self) -> tuple[str, ...]:
+        return tuple(type(self).model_fields.keys())
+
+    def get_values(self) -> tuple[float | ValueTolerance | bool, ...]:
+        return tuple(getattr(self, k) for k in type(self).model_fields.keys())
 
 class ConverterDesign(BaseModel):
-    pass
+
+    spec: ConverterSpec
+    constraints: ConverterConstraints | None = None
+
+    @staticmethod
+    def _corners(value: float | ValueTolerance) -> list[float]:
+        """
+        Valeurs à balayer pour une entrée du cahier des charges.
+
+        float          -> [value]
+        ValueTolerance -> [min_val, nominal, max_val] (doublons retirés, trié)
+        """
+        if isinstance(value, ValueTolerance):
+            return sorted({value.min_val, value.nominal, value.max_val})
+        return [float(value)]
+
+    def _corner_is_valid(self, values: tuple[float, ...]) -> bool:
+        return True
+
+    def _operating_points(self) -> list[dict[str, float]]:
+        """
+        Produit cartésien des coins de tolérance de vin, vout, pout et f_sw.
+        Une entrée = un point de fonctionnement à dimensionner.
+        """
+        spec = self.spec
+
+        keys = spec.get_keys()
+        values = spec.get_values()
+        corners = (
+            self._corners(value) for value in values
+        )
+        return [
+            dict(zip(keys, values))
+            for values in product(*corners)
+            if self._corner_is_valid(values)
+        ]
+
+    def _solve(self, point: dict[str, float]) -> dict[str, float | bool]:
+        return {"Empty, need to be implemented in the subclass" : False}
+
+    def run(self) -> "ConverterDesignResult":
+        """Dimensionne tous les coins de tolérance et renvoie le résultat."""
+        rows = [self._solve(point) for point in self._operating_points()]
+        return ConverterDesignResult(solutions=pd.DataFrame(rows))
 
 class ConverterDesignResult(BaseModel):
-    pass
-
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    solutions: pd.DataFrame
 
 
 class BuckSpec(ConverterSpec):
@@ -77,40 +137,19 @@ class BuckConstraints(ConverterConstraints):
 
 
 class BuckDesign(ConverterDesign):
-    spec: BuckSpec
-    constraints: BuckConstraints | None = None
     diode_vf: float | None = None
 
     # region helpers
+    @override
+    def _corner_is_valid(self, values: tuple[float, ...]) -> bool:
+        # vin > vout (modifié pour correspondre à la condition stricte de _duty_cycle)
+        if values[0] > values[1]:
 
-    @staticmethod
-    def _corners(value: float | ValueTolerance) -> list[float]:
-        """
-        Valeurs à balayer pour une entrée du cahier des charges.
-
-        float          -> [value]
-        ValueTolerance -> [min_val, nominal, max_val] (doublons retirés, trié)
-        """
-        if isinstance(value, ValueTolerance):
-            return sorted({value.min_val, value.nominal, value.max_val})
-        return [float(value)]
-
-    def _operating_points(self) -> list[dict[str, float]]:
-        """
-        Produit cartésien des coins de tolérance de vin, vout, pout et f_sw.
-        Une entrée = un point de fonctionnement à dimensionner.
-        """
-        spec = self.spec
-
-        keys = ("vin", "vout", "pout", "f_sw")
-        corners = (
-            self._corners(spec.vin),
-            self._corners(spec.vout),
-            self._corners(spec.pout),
-            self._corners(spec.switching_frequency),
-        )
-
-        return [dict(zip(keys, values)) for values in product(*corners)]
+            return True
+        print("-"*20)
+        print(f"Invalid corner: vin={values[0]} vout={values[1]}, vin must be greater than vout for a buck converter")
+        print("-"*20)
+        return False
 
     def _duty_cycle(self, vin: float, vout: float) -> float:
         """
@@ -194,10 +233,11 @@ class BuckDesign(ConverterDesign):
                 c_ok = c_min <= self.constraints.c.max_val
         return {"l_ok": l_ok, "c_ok": c_ok, "valid": l_ok and c_ok}
 
+    @override
     def _solve(self, point: dict[str, float]) -> dict[str, float | bool]:
         """Dimensionne un point de fonctionnement -> une ligne du DataFrame."""
         vin, vout = point["vin"], point["vout"]
-        pout, f_sw = point["pout"], point["f_sw"]
+        pout, f_sw = point["pout"], point["switching_frequency"]
 
         d = self._duty_cycle(vin, vout)
         iout = self._output_current(pout, vout)
@@ -229,30 +269,12 @@ class BuckDesign(ConverterDesign):
 
     # endregion
 
-    def run(self) -> "BuckDesignResult":
-        """Dimensionne tous les coins de tolérance et renvoie le résultat."""
-        rows = [self._solve(point) for point in self._operating_points()]
-        return BuckDesignResult(solutions=pd.DataFrame(rows))
 
 
-class BuckDesignResult(BaseModel):
+
+class BuckDesignResult(ConverterDesignResult):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     solutions: pd.DataFrame
-
-    # region helpers
-
-    def _column(self, name: str) -> pd.Series:
-        """Accès à une colonne avec un message d'erreur explicite."""
-        if name not in self.solutions.columns:
-            raise KeyError(f"colonne '{name}' absente de solutions: {list(self.solutions.columns)}")
-        return self.solutions[name]
-
-
-
-
-
-
-
 
 
 if __name__ == "__main__":
