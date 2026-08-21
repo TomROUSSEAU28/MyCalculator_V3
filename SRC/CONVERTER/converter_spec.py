@@ -3,6 +3,7 @@ from typing import override
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, model_validator
+from enum import Enum, auto
 
 # Règles du pouce utilisées quand les contraintes ne sont pas fournies.
 DEFAULT_CURRENT_RIPPLE_PERCENT = 30.0
@@ -70,6 +71,14 @@ class ConverterConstraints(BaseModel):
 
     def get_values(self) -> tuple[float | ValueTolerance | bool, ...]:
         return tuple(getattr(self, k) for k in type(self).model_fields.keys())
+
+
+
+
+class ConductionMode(Enum):
+    CCM = auto()  # Continuous Conduction Mode
+    DCM = auto()  # Discontinuous Conduction Mode
+    BCM = auto()  # Boundary/Transition Conduction Mode
 
 class ConverterDesign(BaseModel):
 
@@ -150,6 +159,63 @@ class BuckDesign(ConverterDesign):
         print(f"Invalid corner: vin={values[0]} vout={values[1]}, vin must be greater than vout for a buck converter")
         print("-"*20)
         return False
+
+    @override
+    def _solve(self, point: dict[str, float]) -> dict[str, float | bool]:
+        """Dimensionne un point de fonctionnement -> une ligne du DataFrame."""
+
+
+
+        vin, vout = point["vin"], point["vout"]
+        pout, f_sw = point["pout"], point["switching_frequency"]
+
+        d = self._duty_cycle(vin, vout)
+        iout = self._output_current(pout, vout)
+        delta_il = self._current_ripple(iout)
+
+        mode = self._determine_mode(iout, delta_il) # apres on va faire un match case
+
+        match mode:
+            case ConductionMode.CCM:
+
+            case ConductionMode.BCM:
+                pass
+            case ConductionMode.DCM:
+                pass
+
+        delta_vout = self._voltage_ripple(vout)
+
+        l_min = self._inductance(vin, vout, d, f_sw, delta_il)
+        l_ccm = self._boundary_inductance(vout, iout, d, f_sw)
+        c_min = self._capacitance(delta_il, f_sw, delta_vout)
+
+        row: dict[str, float | bool] = {
+            **point,
+            "iout": iout,
+            "duty": d,
+            "delta_il": delta_il,
+            "delta_vout": delta_vout,
+            "il_rms": self._rms_current(iout, delta_il, 1.0),
+            "il_pk": iout + delta_il / 2.0,
+            "l_min": l_min,
+            "l_ccm": l_ccm,
+            "c_min": c_min,
+            "isw_rms": self._rms_current(iout, delta_il, d),
+            "idiode_rms": self._rms_current(iout, delta_il, 1.0 - d),
+            "idiode_avg": iout * (1.0 - d),
+            "ccm": iout >= delta_il / 2.0,
+        }
+        row.update(self._check_constraints(l_min, c_min))
+        return row
+
+    def _determine_mode(self, iout: float, delta_il_ccm: float) -> ConductionMode:
+        """Détermine le mode en supposant d'abord qu'on est en CCM."""
+        if iout > delta_il_ccm / 2.0:
+            return ConductionMode.CCM
+        elif iout == delta_il_ccm / 2.0:
+            return ConductionMode.BCM
+        else:
+            return ConductionMode.DCM
 
     def _duty_cycle(self, vin: float, vout: float) -> float:
         """
@@ -233,39 +299,7 @@ class BuckDesign(ConverterDesign):
                 c_ok = c_min <= self.constraints.c.max_val
         return {"l_ok": l_ok, "c_ok": c_ok, "valid": l_ok and c_ok}
 
-    @override
-    def _solve(self, point: dict[str, float]) -> dict[str, float | bool]:
-        """Dimensionne un point de fonctionnement -> une ligne du DataFrame."""
-        vin, vout = point["vin"], point["vout"]
-        pout, f_sw = point["pout"], point["switching_frequency"]
 
-        d = self._duty_cycle(vin, vout)
-        iout = self._output_current(pout, vout)
-        delta_il = self._current_ripple(iout)
-        delta_vout = self._voltage_ripple(vout)
-
-        l_min = self._inductance(vin, vout, d, f_sw, delta_il)
-        l_ccm = self._boundary_inductance(vout, iout, d, f_sw)
-        c_min = self._capacitance(delta_il, f_sw, delta_vout)
-
-        row: dict[str, float | bool] = {
-            **point,
-            "iout": iout,
-            "duty": d,
-            "delta_il": delta_il,
-            "delta_vout": delta_vout,
-            "il_rms": self._rms_current(iout, delta_il, 1.0),
-            "il_pk": iout + delta_il / 2.0,
-            "l_min": l_min,
-            "l_ccm": l_ccm,
-            "c_min": c_min,
-            "isw_rms": self._rms_current(iout, delta_il, d),
-            "idiode_rms": self._rms_current(iout, delta_il, 1.0 - d),
-            "idiode_avg": iout * (1.0 - d),
-            "ccm": iout >= delta_il / 2.0,
-        }
-        row.update(self._check_constraints(l_min, c_min))
-        return row
 
     # endregion
 
