@@ -110,7 +110,6 @@ class BuckDesign(ConverterDesign):
             self._corners(spec.switching_frequency),
         )
 
-        print([dict(zip(keys, values)) for values in product(*corners)])
         return [dict(zip(keys, values)) for values in product(*corners)]
 
     def _duty_cycle(self, vin: float, vout: float) -> float:
@@ -242,56 +241,17 @@ class BuckDesignResult(BaseModel):
 
     # region helpers
 
-    _ENVELOPE_MAX = (
-        "delta_il",
-        "il_rms",
-        "il_pk",
-        "l_min",
-        "l_ccm",
-        "c_min",
-        "isw_rms",
-        "idiode_rms",
-        "idiode_avg",
-    )
-
     def _column(self, name: str) -> pd.Series:
         """Accès à une colonne avec un message d'erreur explicite."""
         if name not in self.solutions.columns:
             raise KeyError(f"colonne '{name}' absente de solutions: {list(self.solutions.columns)}")
         return self.solutions[name]
 
-    def _numeric_columns(self) -> list[str]:
-        return self.solutions.select_dtypes("number").columns.tolist()
 
-    def _worst_case(self) -> pd.Series:
-        """
-        Enveloppe de dimensionnement : le pire de chaque grandeur, tous coins
-        confondus. Ce n'est pas une ligne existante du DataFrame, mais la
-        combinaison qui couvre tous les points de fonctionnement.
-        """
-        envelope: dict[str, float | bool] = {
-            name: float(self._column(name).max()) for name in self._ENVELOPE_MAX
-        }
-        duty = self._column("duty")
-        envelope["duty_min"] = float(duty.min())
-        envelope["duty_max"] = float(duty.max())
-        envelope["ccm_all"] = bool(self._column("ccm").all())
-        return pd.Series(envelope)
 
-    # endregion
 
-    @property
-    def feasible(self) -> bool:
-        """True si tous les coins de tolérance respectent les contraintes L/C."""
-        return bool(self._column("valid").all())
 
-    def worst_case(self) -> pd.Series:
-        return self._worst_case()
 
-    def summary(self) -> pd.DataFrame:
-        """min / max / worst-case de chaque grandeur numérique."""
-        numeric = self.solutions[self._numeric_columns()]
-        return pd.DataFrame({"min": numeric.min(), "max": numeric.max()})
 
 
 
@@ -321,7 +281,3 @@ if __name__ == "__main__":
     pd.set_option("display.width", 200)
     pd.set_option("display.max_columns", None)
     print(result.solutions)
-    print()
-    print(result.worst_case())
-    print()
-    print(f"feasible: {result.feasible}")
